@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+#https://extendsclass.com/python-tester.html
 
 ###### library  ########################################################### Functions, Constants #####
 import sys                                                           # getdefaultencoding, getfilesystemencoding, platform, argv
@@ -9,9 +10,6 @@ import datetime                                                      # datetime
 import re                                                            # match, compilef, sub
 import fnmatch                                                       # translate
 import logging, logging.handlers                                     # FileHandler, Formatter, getLogger, DEBUG | RotatingFileHandler
-import Media                                                         # Episode
-import VideoFiles                                                    # Scan
-import Stack                                                         # Scan
 import inspect                                                       # getfile, currentframe
 import ssl                                                           # SSLContext
 import zipfile                                                       # ZipFile, namelist
@@ -21,31 +19,37 @@ try:                 from ssl import PROTOCOL_TLS    as SSL_PROTOCOL # Python >=
 except ImportError:  from ssl import PROTOCOL_SSLv23 as SSL_PROTOCOL # Python <  2.7.13
 try:                 from urllib.request import urlopen, Request     # Python >= 3.0
 except ImportError:  from urllib2        import urlopen, Request     # Python == 2.x
-
 try:     import filebot #from https://github.com/filebot/plex-agents, needs the scanner from FileBot installed
 except:  FileBot = {}
 else:    FileBot = {'TheTVDB': 'tvdb', 'AniDB': 'anidb', 'TheMovieDB::TV': 'tsdb', 'movie': 'tmdb'}
-	
+
+#Plex Libraries
+import Media                                                         # Episode
+import VideoFiles                                                    # Scan
+import Stack                                                         # Scan
+
 ### http://www.zytrax.com/tech/web/regex.htm  # http://regex101.com/#python
 def com(string):  return re.compile(string)                 #RE Compile
 def cic(string):  return re.compile(string, re.IGNORECASE)  #RE Compile Ignore Case
 
 ### Log variables, regex, skipped folders, words to remove, character maps ###
-SetupDone        = False
-Log              = None
-Handler          = None
-PLEX_ROOT        = ""
-PLEX_LIBRARY     = {}
-PLEX_LIBRARY_URL = "http://localhost:32400/library/sections/"  # Allow to get the library name to get a log per library https://support.plex.tv/hc/en-us/articles/204059436-Finding-your-account-token-X-Plex-Token
+SetupDone              = False
+Log                    = None
+Handler                = None
+PLEX_ROOT              = ""
+PLEX_LIBRARY           = {}
+PLEX_LIBRARY_URL       = "http://localhost:32400/library/sections/"  # Allow to get the library name to get a log per library https://support.plex.tv/hc/en-us/articles/204059436-Finding-your-account-token-X-Plex-Token
+SSL_CONTEXT            = ssl.SSLContext(SSL_PROTOCOL)
+HEADERS                = {'Content-type': 'application/json'}
 
-SOURCE_IDS       = cic(r'\[((?P<source>(anidb(|[2-4])|tvdb(|[2-5])|tmdb|tsdb|imdb|youtube(|2)))-(?P<id>[^\[\]]*)|(?P<yt>(PL[^\[\]]{16}|PL[^\[\]]{32}|(UU|FL|LP|RD|UC|HC)[^\[\]]{22})))\]')
-SOURCE_ID_FILES  = ["anidb.id", "anidb2.id", "anidb3.id", "anidb4.id", "tvdb.id", "tvdb2.id", "tvdb3.id", "tvdb4.id", "tvdb5.id", "tmdb.id", "tsdb.id", "imdb.id", "youtube.id", "youtube2.id"]
-SOURCE_ID_OFFSET = cic(r"(?P<id>\d{1,7})-(?P<season>s\d{1,3})?(?P<episode>e-?\d{1,3})?")
+SOURCE_IDS             = cic(r'\[((?P<source>(anidb(|[2-4])|tvdb(|[2-5])|tmdb|tsdb|imdb|youtube(|[2-3])))-(?P<id>[^\[\]]*)|(?P<yt>(PL[^\[\]]{16}|PL[^\[\]]{32}|(UU|FL|LP|RD|UC|HC)[^\[\]]{22})))\]')
+SOURCE_ID_FILES        = ["anidb.id", "anidb2.id", "anidb3.id", "anidb4.id", "tvdb.id", "tvdb2.id", "tvdb3.id", "tvdb4.id", "tvdb5.id", "tmdb.id", "tsdb.id", "imdb.id", "youtube.id", "youtube2.id", "youtube3.id"]
+SOURCE_ID_OFFSET       = cic(r"(?P<id>\d{1,7})-(?P<season>s\d{1,3})?(?P<episode>e-?\d{1,3})?")
+ASS_MAPPING_URL        = 'https://rawgit.com/ZeroQI/Absolute-Series-Scanner/master/tvdb4.mapping.xml'
 
-ANIDB_HTTP_API_URL = 'http://api.anidb.net:9001/httpapi?request=anime&client=hama&clientver=1&protover=1&aid='
-ANIDB_SLEEP_MIN    = 6
-AniDBBan           = False
-
+ANIDB_HTTP_API_URL     = 'http://api.anidb.net:9001/httpapi?request=anime&client=hama&clientver=1&protover=1&aid='
+ANIDB_SLEEP_MIN        = 6
+AniDBBan               = False
 ANIDB_TVDB_MAPPING     = 'https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list-master.xml'
 ANIDB_TVDB_MAPPING_MOD = 'https://rawgit.com/ZeroQI/Absolute-Series-Scanner/master/anime-list-corrections.xml'
 ANIDB_TVDB_MAPPING_LOC = 'anime-list-custom.xml'  # Custom local correction for ScudLee mapping file url
@@ -55,95 +59,80 @@ TVDB_API2_LOGIN        = "https://api.thetvdb.com/login"
 TVDB_API2_KEY          = "A27AD9BE0DA63333"
 TVDB_API2_EPISODES     = 'https://api.thetvdb.com/series/{}/episodes?page={}'
 
-ASS_MAPPING_URL        = 'https://rawgit.com/ZeroQI/Absolute-Series-Scanner/master/tvdb4.mapping.xml'
-
-SSL_CONTEXT = ssl.SSLContext(SSL_PROTOCOL)
-HEADERS     = {'Content-type': 'application/json'}
-
 FILTER_CHARS    = "\\/:*?<>|;"  #_.~                                                                                                                                             # Windows file naming limitations + "~;" as plex cut title at this for the agent
-SEASON_RX       = [                                                                                                                                                              ### Seasons Folders
-                    cic(r'^Specials'),                                                                                                                                           # Specials (season 0)
-                    cic(r'^(Season|Series|Book|Saison|Livre|Temporada|S)[ _\-\.]*(?P<season>\d{1,4})'),                                                                                    # Season / Series / Book / Saison / Livre / S
-                    cic(r'^(?P<show>.*?)[\._\- ]+S(?P<season>\d{2})$'),                                                                                                          # (title) S01
-                    cic(r'^(?P<season>\d{1,2})'),                                                                                                                                # ##
+SEASON_RX       = [ cic(r'^Specials'),                                                                                                                                           # Specials (season 0)
+                    cic(r'(^|(?P<show>.*)[\._\-\— ]+)(Season|Series|Book|Saison|Livre|Temporada|[Ss]|se)[\._\—\- ]*?(?P<season>\d{1,4})([\._\-\— ]*.*|$)'),                      # (title) S01
+                    cic(u'(?P<show>.*)(?P<season>\d{1,4}).*сезон.*'),                                                                    # (title) S01
+                    cic(r'(^|(?P<show>.*)[\._\-\— ]*)Volume[\._\-\— ]*?(?P<season>(?=[MDCLXVI])M*D?C{0,4}L?X{0,4}V?I{0,4}).*?'),                                                 # (title) S01
                     cic(r'^(Saga|(Story )?Ar[kc])')]                                                                                                                             # Last entry, folder name droped but files kept: Saga / Story Ar[kc] / Ar[kc]
 SERIES_RX       = [                                                                                                                                                              ######### Series regex - "serie - xxx - title" ###
-  cic(r'(^|(?P<show>.*?)[ _\.\-]+)(?P<season>\d{1,2})XE?(?P<ep>\d{1,3})(([_\-X]|[_\-]\d{1,2}X)(?P<ep2>\d{1,3}))?([ _\.\-]+(?P<title>.*))?$'),                                    #  0 # 1x01
-  cic(r'(^|(?P<show>.*?)[ _\.\-]*)SE?(?P<season>\d{1,4})[ _\.\-]?EP?(?P<ep>\d{1,3})(([ _\.\-]|EP?|[ _\.\-]EP?)(?P<ep2>\d{1,3}))?[ _\.]*(?P<title>.*?)$'),                          #  1 # s01e01-02 | ep01-ep02 | e01-02 | s01-e01 | s01 e01'(^|(?P<show>.*?)[ _\.\-]+)(?P<ep>\d{1,3})[ _\.\-]?of[ _\.\-]?\d{1,3}([ _\.\-]+(?P<title>.*?))?$',                                                              #  2 # 01 of 08 (no stacking for this one ?)
+  cic(r'(^|(?P<show>.*?)[ _\.\-]*)(?P<season>\d{1,2})XE?(?P<ep>\d{1,3})(([_\-X]|[_\-]\d{1,2}X)(?P<ep2>\d{1,3}))?([ _\.\-]+(?P<title>.*))?$'),                                    #  0 # 1x01
+  cic(r'(^|(?P<show>.*?)[ _\.\-]*)SE?(?P<season>\d{1,4})[ _\.\-]?EP?(?P<ep>\d{1,3})(([ _\.\-]|EP?|[ _\.\-]EP?)(?P<ep2>\d{1,3}))?[ _\.]*(?P<title>.*?)$'),                        #  1 # s01e01-02 | ep01-ep02 | e01-02 | s01-e01 | s01 e01'(^|(?P<show>.*?)[ _\.\-]+)(?P<ep>\d{1,3})[ _\.\-]?of[ _\.\-]?\d{1,3}([ _\.\-]+(?P<title>.*?))?$',                                                              #  2 # 01 of 08 (no stacking for this one ?)
   cic(r'^(?P<show>.*?)[ _\.]-[ _\.](EP?)?(?P<ep>\d{1,3})(-(?P<ep2>\d{1,3}))?(V\d)?[ _\.]*?(?P<title>.*)$'),                                                                      #  2 # Serie - xx - title.ext | ep01-ep02 | e01-02
-  cic(r'^(?P<show>.*?)[ _\.]\[(?P<season>\d{1,2})\][ _\.]\[(?P<ep>\d{1,3})\][ _\.](?P<title>.*)$')]
-DATE_RX         = [ #https://support.plex.tv/articles/200381053-naming-date-based-tv-shows/
-                    cic(r'(?P<year>\d{4})\W+(?P<month>\d{2})\W+(?P<day>\d{2})(\D|$)'),   # 2009-02-10
-                    cic(r'(?P<month>\d{2})\W+(?P<day>\d{2})\W+(?P<year>\d{4})(\D|$)')]       # 02-10-2009
+  cic(r'^(?P<show>.*?)[ _\.]\[(?P<season>\d{1,2})\][ _\.]\[(?P<ep>\d{1,3})\][ _\.](?P<title>.*)$'),
+  cic(r'^\[.*\]\[(?P<show>.*)\]\[(?P<ep>\d{1,3})\].*$'),
+  cic(r'(^|(?P<show>.*)[ _\.\-]+)(?P<season>\d{1,2})ACV(?P<ep>\d{1,2})([ _\.\-]+(?P<title>.*)|$)') #20th Television production format (Futurama)
+  ]
+MOVIE_RX        = cic(r'(?P<show>.*) \((?P<year>\d{4})\)$')
+DATE_RX         = [ cic(r'(?P<year>\d{4})[ \-\.]?(?P<month>\d{2})[ \-\.]?(?P<day>\d{2})'),  # 2009-02-10  #https://support.plex.tv/articles/200381053-naming-date-based-tv-shows/
+                    cic(r'(?P<month>\d{2})\W+(?P<day>\d{2})\W+(?P<year>\d{4})(\D|$)')]  # 02-10-2009
 ANIDB_RX        = [                                                                                                                                                              ###### AniDB Specials episode offset regex array
-                    cic(r'(^|(?P<show>.*?)[ _\.\-]+)(SP|SPECIAL)[ _\.]?(?P<ep>\d{1,2})(-(?P<ep2>\d{1,3}))?(V\d)?[ _\.]?(?P<title>.*)$'),                                         #  0 # 001-099 Specials
+                    cic(r'(^|(?P<show>.*?)[ _\.\-]+)(S|SP|SPECIAL)[ _\.]?(?P<ep>\d{1,2})(-(?P<ep2>\d{1,3}))?(V\d)?[ _\.]?(?P<title>.*)$'),                                       #  0 # 001-099 Specials
                     cic(r'(^|(?P<show>.*?)[ _\.\-]+)(OP|NCOP|OPENING)[ _\.]?(?P<ep>\d{1,2}[a-z]?)?[ _\.]?(V\d)?([ _\.\-]+(?P<title>.*))?$'),                                     #  1 # 100-149 Openings
                     cic(r'(^|(?P<show>.*?)[ _\.\-]+)(ED|NCED|ENDING)[ _\.]?(?P<ep>\d{1,2}[a-z]?)?[ _\.]?(V\d)?([ _\.\-]+(?P<title>.*))?$'),                                      #  2 # 150-199 Endings
                     cic(r'(^|(?P<show>.*?)[ _\.\-]+)(TRAILER|PROMO|PV|T)[ _\.]?(?P<ep>\d{1,2})[ _\.]?(V\d)?([ _\.\-]+(?P<title>.*))?$'),                                         #  3 # 200-299 Trailer, Promo with a  number  '(^|(?P<show>.*?)[ _\.\-]+)((?<=E)P|PARODY|PARODIES?) ?(?P<ep>\d{1,2})? ?(v2|v3|v4|v5)?(?P<title>.*)$',                                                                        # 10 # 300-399 Parodies
                     cic(r'(^|(?P<show>.*?)[ _\.\-]+)(O|OTHERS?)(?P<ep>\d{1,2})[ _\.]?(V\d)?([ _\.\-]+(?P<title>.*))?$'),                                                         #  4 # 400-499 Others
-                    cic(r'(^|(?P<show>.*?)[ _\.\-]+)(EP?[ _\.\-]?)?(?P<ep>\d{1,3})((-|-?EP?)(?P<ep2>\d{1,3})|)?[ _\.]?(V\d)?([ _\.\-]+(?P<title>.*))?$'),                        #  5 # E01 | E01-02| E01-E02 | E01E02                                                                                                                       # __ # look behind: (?<=S) < position < look forward: (?!S)
-                    cic(r'(^|(?P<show>.*?)[ _\.\-]+)SP?[ _\.]?(?P<ep>\d{1,2})[ _\.]?(?P<title>.*)$')]                                                                            #  6 # 001-099 Specials #'S' moved to the end to make sure season strings are not caught in prev regex
+                    cic(r'(^|(?P<show>.*?)[ _\.\-]+)(EP?[ _\.\-]?)?(?P<ep>\d{1,3})((-|-?EP?)(?P<ep2>\d{1,3})|)?[ _\.]?(V\d)?([ _\.\-]+(?P<title>.*))?$')]                        #  5 # E01 | E01-02| E01-E02 | E01E02                                                                                                                       # __ # look behind: (?<=S) < position < look forward: (?!S)
 ANIDB_OFFSET    = [        0,       100,      150,       200,     400,         0,         0]                                                                                     ###### AniDB Specials episode offset value array
 ANIDB_TYPE      = ['Special', 'Opening', 'Ending', 'Trailer', 'Other', 'Episode', 'Episode']                                                                                     ###### AniDB titles
 COUNTER         = 500
 
 # Uses re.match() so forces a '^'
 IGNORE_DIRS_RX_RAW  = [ '@Recycle', r'\.@__thumb', r'lost\+found', r'\.AppleDouble', r'\$Recycle.Bin', 'System Volume Information', 'Temporary Items', 'Network Trash Folder',   ###### Ignored folders
-                        '@eaDir', 'Extras', r'Samples?', 'bonus', r'.*bonus disc.*', r'trailers?', r'.*_UNPACK_.*', r'.*_FAILED_.*', r'_?Misc', '.xattr']                        # source: Filters.py  removed '\..*',
+                        '@eaDir', 'Extras', r'Samples?', 'bonus', r'.*bonus disc.*', r'trailers?', r'.*_UNPACK_.*', r'.*_FAILED_.*', r'_?Misc', '.xattr', 'audio', 'sub', '.*Special Features']        # source: Filters.py  removed '\..*',
 IGNORE_DIRS_RX      = [cic(entry) for entry in IGNORE_DIRS_RX_RAW]
 # Uses re.match() so forces a '^'
-IGNORE_FILES_RX_RAW = [ r'[ _\.\-]?sample', r'-Recap\.', r'\._', 'OST', 'soundtrack']                                                                                            # Skipped files (samples, trailers)
-IGNORE_FILES_RX     = [cic(entry) for entry in IGNORE_FILES_RX_RAW]
+IGNORE_FILES_RX     = [cic(r'[ _\.\-]?sample'), cic(r'-Recap\.'), cic(r'\._'), cic(r'OST'), cic(r'soundtrack')]
 
 VIDEO_EXTS          = [ '3g2', '3gp', 'asf', 'asx', 'avc', 'avi', 'avs', 'bin', 'bivx', 'divx', 'dv', 'dvr-ms', 'evo', 'fli', 'flv', 'img', 'iso', 'm2t', 'm2ts', 'm2v',         #
                         'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'mts', 'nrg', 'nsv', 'nuv', 'ogm', 'ogv', 'tp', 'pva', 'qt', 'rm', 'rmvb', 'sdp', 'swf', 'svq3', 'strm',      #
                         'ts', 'ty', 'vdr', 'viv', 'vp3', 'wmv', 'wpl', 'wtv', 'xsp', 'xvid', 'webm', 'ifo', 'disc']                                                              # DVD: 'ifo', 'bup', 'vob'
 
-WHACK_PRE_CLEAN_RAW = [ "x264-FMD Release", "x264-h65", "x264-mSD", "x264-BAJSKORV", "x264-MgB", "x264-SYS", "x264-FQM", "x264-ASAP", "x264-QCF", "x264-W4F", 'x264-w4f', "x264-AAC", 
+WHACK_PRE_CLEAN_RAW = [ "x264-FMD Release", "EniaHD (HEVC, WEB-DL 2160p)", "x264-h65", "x264-mSD", "x264-BAJSKORV", "x264-MgB", "x264-SYS", "x264-FQM", "x264-ASAP", "x264-QCF", "x264-W4F", 'x264-w4f', "x264-AAC", 
                         'x264-2hd', "x264-ASAP", 'x264-bajskorv', 'x264-batv', "x264-BATV", "x264-EXCELLENCE", "x264-KILLERS", "x264-LOL", 'x264-MgB', 'x264-qcf', 'x264-SnowDoN', 'x264-xRed', 
-                        "H.264-iT00NZ", "H.264.iT00NZ", 'H264-PublicHD', "H.264-BS", 'REAL.HDTV', "WEB.DL", "H_264_iT00NZ", "www.crazy-torrent.com", "ReourceRG Kids Release",
+                        "H.264-iT00NZ", "H.264.iT00NZ", 'H264-PublicHD', "H.264-BS", 'REAL.HDTV', "WEB.DL", "H_264_iT00NZ", "www.crazy-torrent.com", "ReourceRG Kids Release", "Paramount",
                         "By UniversalFreedom", "XviD-2HD", "XviD-AFG", "xvid-aldi", 'xvid-asap', "XviD-AXED", "XviD-BiA-mOt", 'xvid-fqm', "xvid-futv", 'xvid-killer', "XviD-LMAO", 'xvid-pfa',
                         'xvid-saints', "XviD-T00NG0D", "XViD-ViCKY", "XviD-BiA", "XVID-FHW", "PROPER-LOL", "5Banime-koi_5d", "%5banime-koi%5d", "minitheatre.org", "mthd bd dual", "WEB_DL",
-                        "HDTV-AFG", "HDTV-LMAO", "ResourceRG Kids", "kris1986k_vs_htt91",   'web-dl', "-Pikanet128", "hdtv-lol", "REPACK-LOL", " - DDZ", "OAR XviD-BiA-mOt", "3xR", "(-Anf-)",
-                        "Anxious-He", "Coalgirls", "Commie", "DarkDream", "Doremi", "ExiledDestiny", "Exiled-Destiny", "Exiled Destiny", "FFF", "FFFpeeps", "Hatsuyuki", "HorribleSubs", 
-                        "joseole99", "(II Subs)", "OAR HDTV-BiA-mOt", "Shimeji", "(BD)", "(RS)", "Rizlim", "Subtidal", "Seto-Otaku", "OCZ", "_dn92__Coalgirls__", 
-                        "(BD 1920x1080 Hi10P, JPN+ENG)", "(BD 1280x720 Hi10P)", "(DVD_480p)", "(1080p_10bit)", "(1080p_10bit_DualAudio)", "(Tri.Audio)", "(Dual.Audio)", "(BD_720p_AAC)", "x264-RedBlade",
+                        "HDTV-AFG", "HDTV-LMAO", "ResourceRG Kids", "kris1986k_vs_htt91",   "-Pikanet128", "hdtv-lol", "REPACK-LOL", " - DDZ", "OAR XviD-BiA-mOt", "3xR", "(-Anf-)",
+                        "Anxious-He", "Coalgirls", "2xDVO.MVO", "VO.ENG.Subs", "NF.WEBRip.by.AKTEP", "(HappyLee Remastered HQ)", "Commie", "DarkDream", "Doremi", "ExiledDestiny", "Exiled-Destiny", "Exiled Destiny", "FFF", "FFFpeeps", "Hatsuyuki", "HorribleSubs", 
+                        "joseole99", "DCU.WEB-DL", 'web-dl', "DDP5.1", "x265-NTb", "(II Subs)", "OAR HDTV-BiA-mOt", "Shimeji", "(BD)", "(RS)", "Rizlim", "Subtidal", "Seto-Otaku", "OCZ", "_dn92__Coalgirls__", "CasStudio",
+                        "BDRemux", "(BD 1920x1080 Hi10P, JPN+ENG)", "(BD 1280x720 Hi10P)", "(DVD_480p)", "(1080p_10bit)", "(1080p_10bit_DualAudio)", "(Tri.Audio)", "(Dual.Audio)", "(BD_720p_AAC)", "x264-RedBlade",
                         "BD 1080p", "BD 960p", "BD 720p", "BD_720p", "TV 720p", "DVD 480p", "DVD 476p", "DVD 432p", "DVD 336p", "1080p.BluRay", "FLAC5.1", "x264-CTR", "1080p-Hi10p", "FLAC2.0",
-                        "1920x1080", "1280x720", "848x480", "952x720", "(DVD 720x480 h264 AC3)", "(720p_10bit)", "(1080p_10bit)", "(1080p_10bit", "(BD.1080p.AAC)", "[720p]",
-                        "H.264_AAC", "Hi10P", "Hi10", "x264", "BD 10-bit", "DXVA", "H.264", "(BD, 720p, FLAC)", "Blu-Ray", "Blu-ray",  "SD TV", "SD DVD", "HD TV",  "-dvdrip", "dvd-jap", "(DVD)", 
+                        "2160p", "(final)", "2xRus.Eng", "1920x1080", "1280x720", "848x480", "952x720", "(DVD 720x480 h264 AC3)", "(720p_10bit)", "(1080p_10bit)", "(1080p_10bit", "(BD.1080p.AAC)", "[720p]", "WEBDL", "NewStudio",
+                        "H.264_AAC", "Hi10P", "Hi10", "x264", "BD 10-bit", "DXVA", "H.264", "(BD, 720p, FLAC)", "Blu-Ray", "Blu-ray",  "SD TV", "SD DVD", "HD TV",  "-dvdrip", "dvd-jap", "(DVD)", "BDRip",
                         "FLAC", "Dual Audio", "AC3", "AC3.5.1", "AC3-5.1", "AAC2.0", "AAC.2.0", "AAC2_0", "AAC", "1080p", 'DD2.1', 'DD5.1', "5.1",'divx5.1', "DD5_1", "TV-1", "TV-2", "TV-3", "TV-4", "TV-5",
-                        "(Exiled_Destiny)", "720p", "480p", "_BD", ".XVID", "(xvid)", "dub.sub_ja+.ru+", "dub.sub_en.ja", "dub_en",
-                        "-Cd 1", "-Cd 2", "Vol 1", "Vol 2", "Vol 3", "Vol 4", "Vol 5", "Vol.1", "Vol.2", "Vol.3", "Vol.4", "Vol.5",
-                        "%28", "%29", " (1)", "(Clean)", "vostfr", "HEVC", "(Bonus inclus)", "(BD 1920x1080)", "10Bits-WKN", "WKN", "(Complet)", "Despair-Paradise", "Shanks@", "[720p]", "10Bits", 
-                        "(TV)", "[DragonMax]", "INTEGRALE", "MKV", "MULTI", "DragonMax", "Zone-Telechargement.Ws", "Zone-Telechargement", "AniLibria.TV", "HDTV-RIP"
+                        "(Exiled_Destiny)", "720p", "480p", "_BD", ".XVID", "(xvid)", "dub.sub_ja+.ru+", "dub.sub_en.ja", "dub_en", "UNCENSORED", "THD", "H264", "2xDVO", "Subs", "Sub",
+                        'ExKinoRay', "NTb", "(S01-02)", "-Cd 1", "-Cd 2", "Vol 1", "Vol 2", "Vol 3", "Vol 4", "Vol 5", "Vol.1", "Vol.2", "Vol.3", "Vol.4", "Vol.5", "NTSC",
+                        "%28", "%29", " (1)", "(Clean)", "(DVDRemux)", "vostfr", "HEVC", "(Bonus inclus)", "(BD 1920x1080)", "10Bits-WKN", "WKN", "(Complet)", "Despair-Paradise", "Shanks@", "[720p]", "10Bits", 
+                        "(TV)", "[DragonMax]", "INTEGRALE", "MKV", "(Remastered HQ)", "MULTI", "DragonMax", "Zone-Telechargement.Ws", "Zone-Telechargement", "AniLibria.TV", "HDTV-RIP"
                       ]                                                                                                                                                               #include spaces, hyphens, dots, underscore, case insensitive
 WHACK_PRE_CLEAN     = [cic(re.escape(entry)) for entry in WHACK_PRE_CLEAN_RAW]
 WHACK               = [                                                                                                                                                               ### Tags to remove (lowercase) ###
                         'x264', 'h264', 'dvxa', 'divx', 'xvid', 'divx51', 'mp4', "avi", '8bit', '8-bit', 'hi10', 'hi10p', '10bit', '10-bit', 'crf24', 'crf 24', 'hevc',               # Video Codecs (color depth and encoding)
-                        '480p', '576p', '720p', '1080p', '1080i',                                                                                                                     # Resolution
-                        '24fps', '25fps', 'ntsc', 'pal', 'ntsc-u', 'ntsc-j',                                                                                                          # Refresh rate, Format
+                        '480p', '576p', '720p', '1080p', '1080i', 'HappyLee', 'HQ', "rus", "eng",                                                                                                           # Resolution
+                        '24fps', '25fps', 'ntsc', 'pal', 'ntsc-u', 'ntsc-j', 'BY AKTEP',                                                                                                         # Refresh rate, Format
                         'mp3', 'ogg', 'ogm', 'vorbis', 'aac', 'dts', 'ac3', 'ac-3', '5.1ch', '5.1', '7.1ch',  'qaac',                                                                 # Audio Codecs, channels
                         'dc', 'se', 'extended', 'unrated', 'multi', 'multisubs', 'dubbed', 'dub', 'subbed', 'sub', 'engsub', 'eng', 'french', 'fr', 'jap', "JPN+ENG",                 # edition (dc = directors cut, se = special edition), subs and dubs
                         'custom', 'internal', 'repack', 'proper', 'rerip', "raw", "remastered", "uncensored", 'unc', 'cen',                                                           # format
                         'cd1', 'cd2', 'cd3', 'cd4', '1cd', '2cd', '3cd', '4cd', 'xxx', 'nfo', 'read.nfo', 'readnfo', 'nfofix', 'fragment', 'fs', 'ws', "- copy", "reenc", "hom",      # misc
-                        'retail', 'webrip', 'web-dl', 'wp', 'workprint', "mkv",  "v1", "v2", "v3", "v4", "v5"                                                                         # release type: retail, web, work print
+                        'retail', 'webrip', 'web-dl', 'wp', 'workprint', "mkv",  "v1", "v2", "v3", "v4", "v5",                                                                        # release type: retail, web, work print
                         'bdrc', 'bdrip', 'bluray', 'bd', 'brrip', 'hdrip', 'hddvd', 'hddvdrip', 'wsrip',                                                                              # Source: bluray
-                        'ddc', 'dvdrip', 'dvd', 'r1', 'r3', 'r5', "dvd", 'svcd', 'vcd', 'sd', 'hd', 'dvb', "release", 'ps3avchd',                                                     # Source: DVD, VCD, S-VCD
+                        "eniahd", 'ddc', 'dvdrip', 'dvd', 'r1', 'r3', 'r5', "dvd", 'svcd', 'vcd', 'sd', 'hd', 'dvb', "release", 'ps3avchd',                                                     # Source: DVD, VCD, S-VCD
                         'dsr', 'dsrip', 'hdtv', 'pdtv', 'ppv', 'stv', 'tvrip', 'complete movie', "hiei", "metis", "norar",                                                            # Source: dtv, stv
                         'cam', 'bdscr', 'dvdscr', 'dvdscreener', 'scr', 'screener', 'tc', 'telecine', 'ts', 'telesync', 'mp4',                                                        # Source: screener
-                        "mthd", "thora", 'sickrage', 'brrip', "remastered", "yify", "tsr", "reidy", "gerdhanse", 'remux',                                                             #'limited', 
-                        'rikou', 'hom?', "it00nz", "nn92", "mthd", "elysium", "encodebyjosh", "krissy", "reidy", "it00nz", "s4a"                                                      # Release group
+                        "mthd", "thora", 'NewStudio', 'sickrage', 'brrip', "remastered", "yify", "tsr", "reidy", "gerdhanse", 'remux',                                                             #'limited', 
+                        'rikou', 'hom?', "it00nz", "nn92", "mthd", "elysium", "encodebyjosh", "krissy", "reidy", "it00nz", "s4a", "MVO", "VO"                                         # Release group
                       ]
-
-CHARACTERS_MAP      = {                                                                                                                                                               #Specials characters to re-map
-                        14844057:"'", 14844051:'-', 14844052:'-', 14844070:'...', 15711386:':', 14846080:'∀', 15711646:'~',                                                           #['’' \xe2\x80\x99] ['–' \xe2\x80\x93] ['…' \xe2\x80\xa6] # '：' # 12770:'', # '∀ Gundam' no need #'´' ['\xc2', '\xb4']
-                        50048:'A' , 50050:'A' , 50052:'Ä' , 50080:'a' , 50082:'a' , 50084:'a' , 50305:'a' , 50308:'A' , 50309:'a' ,  50055:'C' , 50087:'c' , 50310:'C' , 50311:'c' ,  #'à' ['\xc3', '\xa0'] #'â' ['\xc3', '\xa2'] #'Ä' ['\xc3', '\x84'] #'ā' ['\xc4', '\x81'] #'À' ['\xc3', '\x80'] #'Â' ['\xc3', '\x82'] # 'Märchen Awakens Romance', 'Rozen Maiden Träumend' #'Ç' ['\xc3', '\x87'] #'ç' ['\xc3', '\xa7'] 
-                        50057:'E' , 50088:'e' , 50089:'e' , 50090:'e' , 50091:'e' , 50323:'e' , 50328:'E' , 50329:'e' ,                                                               #'É' ['\xc3', '\x89'] #'è' ['\xc3', '\xa8'] #'é' ['\xc3', '\xa9'] #'ē' ['\xc4', '\x93'] #'ê' ['\xc3', '\xaa'] #'ë' ['\xc3', '\xab']
-                        50094:'i' , 50095:'i' , 50347:'i' , 50561:'L' , 50562:'l' , 50563:'N' , 50564:'n' , 50097:'n' ,                                                               #'î' ['\xc3', '\xae'] #'ï' ['\xc3', '\xaf'] #'ī' ['\xc4', '\xab'] #'ñ' ['\xc3', '\xb1']
-                        50067:'O' , 50068:'Ô' , 50072:'O' , 50099:'o' , 50100:'o' , 50102:'o' , 50573:'o' , 50578:'OE', 50579:'oe',                                                   #'Ø' ['', '']         #'Ô' ['\xc3', '\x94'] #'ô' ['\xc3', '\xb4'] #'ō' ['\xc5', '\x8d'] #'Œ' ['\xc5', '\x92'] #'œ' ['\xc5', '\x93']
-                        53423:'Я' , 50586:'S' , 50587:'s' , 50079:'ss', 50105:'u' , 50107:'u' , 50108:'u' , 50071:'x' , 50617:'Z' , 50618:'z' , 50619:'Z' , 50620:'z' ,               #'Я' ['\xd0', '\xaf'] #'ß' []               #'ù' ['\xc3', '\xb9'] #'û' ['\xc3', '\xbb'] #'ü' ['\xc3', '\xbc'] #'²' ['\xc2', '\xb2'] #'³' ['\xc2', '\xb3'] #'×' ['\xc3', '\x97'],
-                        49835:'«' , 49842:'²' , 49843:'³' , 49844:"'" , 49847:' ' , 49848:'¸',  49851:'»' , 49853:'½' , 52352:''  , 52353:''                                          #'«' ['\xc2', '\xab'] #'·' ['\xc2', '\xb7'] #'»' ['\xc2', '\xbb']# 'R/Ranma ½ Nettou Hen'  #'¸' ['\xc2', '\xb8'] #'̀' ['\xcc', '\x80'] #  ['\xcc', '\x81'] 
-                      }
                
 # Word Search Compiled Regex (IGNORECASE is not required as word is lowered at start)
 WS_VERSION          = com(r"v\d$")
@@ -152,7 +141,6 @@ WS_MULTI_EP_SIMPLE  = com(r"^(?P<ep>\d{1,3})-(?P<ep2>\d{1,3})$")
 WS_MULTI_EP_COMPLEX = com(r"^(ep?[ -]?)?(?P<ep>\d{1,3})(-|ep?|-ep?)(?P<ep2>\d{1,3})")
 WS_SPECIALS         = com(r"^((t|o)\d{1,3}$|(sp|special|op|ncop|opening|ed|nced|ending|trailer|promo|pv|others?)(\d{1,3})?$)")
 # Switch to turn on youtube date scanning
-SW_YOUTUBE_DATE     = False
 
 ### Setup core variables ################################################################################
 def setup():
@@ -177,16 +165,17 @@ def setup():
   set_logging()
   
   ### Populate PLEX_LIBRARY #############################################################################
-  Log.info("".ljust(157, '='))
-  Log.info("Plex scan start: {}".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")))
+  Log.info(u"".ljust(157, '='))
+  Log.info(u"Plex scan start: {}".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")))
   try:
     library_xml = etree.fromstring(read_url(Request(PLEX_LIBRARY_URL, headers={"X-Plex-Token": os.environ['X_PLEX_TOKEN']})))
     for directory in library_xml.iterchildren('Directory'):
       for location in directory.iterchildren('Location'):
         PLEX_LIBRARY[location.get('path')] = {'title': directory.get('title'), 'scanner': directory.get("scanner"), 'agent': directory.get('agent')}
-        Log.info('id: {:>2}, type: {:<6}, agent: {:<30}, scanner: {:<30}, library: {:<24}, path: {}'.format(directory.get("key"), directory.get('type'), directory.get("agent"), directory.get("scanner"), directory.get('title'), location.get("path")))
-  except:  pass
-
+        Log.info(u'id: {:>2}, type: {:<6}, agent: {:<30}, scanner: {:<30}, library: {:<24}, path: {}'.format(directory.get("key"), directory.get('type'), directory.get("agent"), directory.get("scanner"), directory.get('title'), location.get("path")))
+  except Exception as e:  Log.error("Exception: '%s', library_xml could not be loaded. X-Plex-Token file created?" % (e))
+  Log.info(u"".ljust(157, '='))
+  
 ### Read in a local file ################################################################################  
 def read_file(local_file):
   file_content = ""
@@ -237,47 +226,40 @@ def read_cached_url(url, foldername='', filename='', cache=518400):  # cache=6da
       elif days_old >   30:  cache = (days_old*365*24*60*60)/1825  # enddate > 30 days ago => (days_old/5yrs ended = x/1yrs cache)
     # Return the cached file string if it exists and is not too old
     if file_content_cache and file_age <= cache:
-      Log.info("Using cached file - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
+      Log.info(u"Using cached file - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
       return file_content_cache
     # Pull the content down as either cache does not exist or is too old
     if "api.anidb.net" in url:
       global AniDBBan
       if AniDBBan:  # If a ban has been hit in scan run's life, return cached content (or nothing if there is no cached content)
-        Log.info("Using cached file (AniDBBan) - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
+        Log.info(u"Using cached file (AniDBBan) - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
         return file_content_cache
       import StringIO, gzip
       file_content = gzip.GzipFile(fileobj=StringIO.StringIO(read_url(url))).read()
       time.sleep(ANIDB_SLEEP_MIN)
       if len(file_content)<512:  # Check if the content is too short and thus an error response
         if 'banned' in file_content:  AniDBBan = True
-        Log.info("Using {action} file - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(action="cached file" if file_content_cache else "error response", file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
-        Log.info("-- Error response received: {}".format(file_content))
+        Log.info(u"Using {action} file - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(action="cached file" if file_content_cache else "error response", file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
+        Log.info(u"-- Error response received: {}".format(file_content))
         return file_content_cache or file_content  # If an error has been hit, return cached content (or error response if there is no cached content)
     elif "api.thetvdb.com" in url:
-      if 'Authorization' in HEADERS:  Log.info('Authorised, HEADERS: {}'.format(HEADERS))
+      if 'Authorization' in HEADERS:  Log.info(u'Authorised, HEADERS: {}'.format(HEADERS))
       else:
         page = read_url(Request(TVDB_API2_LOGIN, headers=HEADERS), data=json.dumps({"apikey": TVDB_API2_KEY}))
         HEADERS['Authorization'] = 'Bearer ' + json.loads(page)['token']
-        Log.info('Now authorised, HEADERS: {}'.format(HEADERS))
+        Log.info(u'Now authorised, HEADERS: {}'.format(HEADERS))
       file_content = read_url(Request(url, headers=HEADERS))
     else:
       file_content = read_url(url)
     # Content was pulled down so save it
     if file_content:
-      Log.info("{action} cached file - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(action="Updating" if os.path.exists(local_filename) else "Creating", file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
+      Log.info(u"{action} cached file - Filename: '{file}', Age: '{age:.2f} days', Limit: '{limit} days', url: '{url}'".format(action="Updating" if os.path.exists(local_filename) else "Creating", file=local_filename, age=file_age/86400, limit=cache/86400, url=url))
       write_file(local_filename, file_content)
     return file_content
   except Exception as e:  # Exception hit from possible: xml parsing, file reading/writing, bad url call
     Log.error("Error downloading '{}', Exception: '{}'".format(url, e))
     raise e
 
-#########################################################################################################
-def winapi_path(dos_path, encoding=None): # https://stackoverflow.com/questions/36219317/pathname-too-long-to-open/36219497
-    if (not isinstance(dos_path, unicode) and encoding is not None):  dos_path = dos_path.decode(encoding)
-    path = os.path.abspath(dos_path)
-    if path.startswith(u"\\\\"):  return u"\\\\?\\UNC\\" + path[2:]
-    return u"\\\\?\\" + path
-                                
 ### Sanitize string #####################################################################################
 def os_filename_clean_string(string):
   for char, subst in zip(list(FILTER_CHARS), [" " for x in range(len(FILTER_CHARS))]) + [("`", "'"), ('"', "'")]:    # remove leftover parenthesis (work with code a bit above)
@@ -294,94 +276,59 @@ def Dict(var, *arg, **kwarg):
     else:  return kwarg['default'] if kwarg and 'default' in kwarg else ""   # Allow Dict(var, tvdbid).isdigit() for example
   return kwarg['default'] if var in (None, '', 'N/A', 'null') and kwarg and 'default' in kwarg else "" if var in (None, '', 'N/A', 'null') else var
 
+#########################################################################################################  
+def SaveDict(value, var, *arg):
+  """ Save non empty value to a (nested) Dictionary fields unless value is a list or dict for which it will extend it instead
+      # ex: SaveDict(GetXml(ep, 'Rating'), TheTVDB_dict, 'seasons', season, 'episodes', episode, 'rating')
+      # ex: SaveDict(Dict(TheTVDB_dict, 'title'), TheTVDB_dict, 'title_sort')
+      # ex: SaveDict(genre1,                      TheTVDB_dict, genre) to add    to current list
+      # ex: SaveDict([genre1, genre2],            TheTVDB_dict, genre) to extend to current list
+  """
+  if not value and value!=0:  return ""  # update dict only as string would revert to pre call value being immutable
+  if not arg and (isinstance(var, list) or isinstance(var, dict)):
+    if not (isinstance(var, list) or isinstance(var, dict)):  var = value
+    elif isinstance(value, list) or isinstance(value, dict):  var.extend (value)
+    else:                                                     var.append (value)
+    return value
+    
+  for key in arg[:-1]:
+    if not isinstance(var, dict):  return ""
+    if not key in var:  var[key] = {}
+    var = var[key]
+  if not arg[-1] in var or not isinstance(var[arg[-1]], list):  var[arg[-1]] = value
+  elif isinstance(value, list) or isinstance(value, dict):      var[arg[-1]].extend (value)
+  else:                                                         var[arg[-1]].append (value)
+  return value
+
 ### Set Logging to proper logging file ##################################################################
-def set_logging(root='', foldername='', filename='', backup_count=0, format='%(message)s', mode='w'):#%(asctime)-15s %(levelname)s - 
-  if Dict(PLEX_LIBRARY, root, 'agent') == 'com.plexapp.agents.hama':
-    cache_path = os.path.join(PLEX_ROOT, 'Plug-in Support', 'Data', 'com.plexapp.agents.hama', 'DataItems', '_Logs')
-  else:  cache_path = os.path.join(PLEX_ROOT, 'Logs', 'ASS Scanner Logs')
+def set_logging(root='', foldername='', filename='', backup_count=0, format='%(message)s', mode='a'):#%(asctime)-15s %(levelname)s - 
+  if Dict(PLEX_LIBRARY, root, 'agent') == 'com.plexapp.agents.hama':  cache_path = os.path.join(PLEX_ROOT, 'Plug-in Support', 'Data', 'com.plexapp.agents.hama', 'DataItems', '_Logs')
+  else:                                                               cache_path = os.path.join(PLEX_ROOT, 'Logs', 'ASS Scanner Logs')
 
-  if not foldername:  foldername = Dict(PLEX_LIBRARY, root, 'title')  # If foldername is not defined, try and pull the library title from PLEX_LIBRARY
-
-  if foldername:  cache_path = os.path.join(cache_path, os_filename_clean_string(foldername))
-
+  if not foldername:                  foldername = Dict(PLEX_LIBRARY, root, 'title')  # If foldername is not defined, try and pull the library title from PLEX_LIBRARY
+  if foldername:                      cache_path = os.path.join(cache_path, os_filename_clean_string(foldername))
   if not os.path.exists(cache_path):  os.makedirs(cache_path)
-
+  
   filename = os_filename_clean_string(filename) if filename else '_root_.scanner.log'
   log_file = os.path.join(cache_path, filename)
-  if os.sep=="\\":  log_file = winapi_path(log_file, 'utf-8') # Bypass DOS path MAX_PATH limitation
+  
+  # Bypass DOS path MAX_PATH limitation (260 Bytes=> 32760 Bytes, 255 Bytes per folder unless UDF 127B ytes max)
+  if os.sep=="\\":
+    dos_path = os.path.abspath(log_file) if isinstance(log_file, unicode) else os.path.abspath(log_file.decode('utf-8'))
+    log_file = u"\\\\?\\UNC\\" + dos_path[2:] if dos_path.startswith(u"\\\\") else u"\\\\?\\" + dos_path
 
-  mode = 'a' if os.path.exists(log_file) and os.stat(log_file).st_mtime + 3600 > time.time() else mode # Override mode for repeat manual scans or immediate rescans
+  #if not mode:  mode = 'a' if os.path.exists(log_file) and os.stat(log_file).st_mtime + 3600 > time.time() else 'w' # Override mode for repeat manual scans or immediate rescans
 
   global Handler
-  if Handler: Log.removeHandler(Handler)
-  if backup_count:  Handler = logging.handlers.RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=backup_count)
-  else:             Handler = logging.FileHandler                 (log_file, mode=mode)
+  if Handler:       Log.removeHandler(Handler)
+  if backup_count:  Handler = logging.handlers.RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=backup_count, encoding='utf-8')
+  else:             Handler = logging.FileHandler                 (log_file, mode=mode, encoding='utf-8')
   Handler.setFormatter(logging.Formatter(format))
   Handler.setLevel(logging.DEBUG)
   Log.addHandler(Handler)
 
 ### Turn a string into a list of string and number chunks  "z23a" -> ["z", 23, "a"] #####################
 def natural_sort_key(s, _nsre=com(r'(\d+)')):  return [int(text) if text.isdigit() else text.lower() for text in _nsre.split(s)]
-
-### Return number of bytes of Unicode characters ########################################################
-def unicodeCharLen(char):                                       # count consecutive 1 bits since it represents the byte numbers-1, less than 1 consecutive bit (128) is 1 byte , less than 23 bytes is 1
-  for x in range(1,6):                                           # start at 1, 6 times 
-    if ord(char) < 256-pow(2, 7-x)+(2 if x==6 else 0): return x  # 256-2pow(x) with x(7->0) = 128 192 224 240 248 252 254 255 = 1 to 8 bits at 1 from the left, 256-2pow(7-x) starts form left
- 
-### Return correct String length even with Unicode characters ###########################################
-def unicodeLen(string): 
-  length = 0
-  for char in string:  length += unicodeCharLen(char)
-  return length
-  
-### Decode string back to Unicode ###   #Unicodize in utils?? #fixEncoding in unicodehelper #############
-def encodeASCII(string, language=None): #from Unicodize and plex scanner and other sources
-  if string=="": return ""
-  ranges = [ {"from": u"\u3300" , "to": u"\u33ff" }, #
-             {"from": u"\ufe30" , "to": u"\ufe4f" }, #
-             {"from": u"\uf900" , "to": u"\ufaff" }, #compatibility ideographs
-             {"from": u"\u30a0" , "to": u"\u30ff" }, #cjk radicals supplement                 - Japanese Kana    
-             {"from": u"\u2e80" , "to": u"\u2eff" }, #cjk radicals supplement                 - Japanese Kana    
-             {"from": u"\u4e00" , "to": u"\u9fff" }, #CJK Unified Ideographs                  - Chinese Han Ideographs, Common
-             {"from": u"\uF900" , "to": u"\uFAFF" }, #CJK Compatibility Ideographs            - Chinese Han Ideographs, Rare, historic
-             {"from": u"\u3400" , "to": u"\u4DBF" }, #CJK Unified Ideographs Extension A      - Chinese Han Ideographs, Rare
-             {"from": u"\u20000", "to": u"\u2A6DF"}, #CJK Unified Ideographs Extension B      - Chinese Han Ideographs, Rare, historic
-             {"from": u"\u2A700", "to": u"\u2B73F"}, #CJK Unified Ideographs Extension C      - Chinese Han Ideographs, Rare, historic
-             {"from": u"\u2B740", "to": u"\u2B81F"}, #CJK Unified Ideographs Extension D      - Chinese Han Ideographs, Uncommon, some in current use
-             {"from": u"\u2B820", "to": u"\u2CEAF"}, #CJK Unified Ideographs Extension E      - Chinese Han Ideographs, Rare, historic
-             {"from": u"\u2F800", "to": u"\u2FA1F"}] #CJK Compatibility Ideographs Supplement - Chinese Han Ideographs, Duplicates, unifiable variants, corporate characters
-  encodings, encoding = ['iso8859-1', 'utf-16', 'utf-16be', 'utf-8'], ord(string[0])                                                                          #
-  if 0 <= encoding < len(encodings):  string = string[1:].decode('cp949') if encoding == 0 and language == 'ko' else string[1:].decode(encodings[encoding])   # If we're dealing with a particular language, we might want to try another code page.
-  if sys.getdefaultencoding() not in encodings:
-    try:     string = string.decode(sys.getdefaultencoding())
-    except:  pass
-  if not sys.getfilesystemencoding()==sys.getdefaultencoding():
-    try:     string = string.decode(sys.getfilesystemencoding())
-    except:  pass
-  string = string.strip('\0')
-  try:       string = unicodedata.normalize('NFKD', string)    # Unicode  to ascii conversion to corect most characters automatically
-  except:    pass
-  try:       string = re.sub(RE_UNICODE_CONTROL, '', string)   # Strip control characters.
-  except:    pass
-  try:       string = string.encode('ascii', 'replace')        # Encode into Ascii
-  except:    pass
-  original_string, string, i = string, list(string), 0
-  asian_language = False
-  while i < len(string):                                       ### loop through unicode and replace special chars with spaces then map if found ###
-    if ord(string[i])<128:  i = i+1
-    else: #non ascii char
-      char, char2, char_list, char_len = 0, "", [], unicodeCharLen(string[i])
-      for x in range(0, char_len):
-        char = 256*char + ord(string[i+x]); char2 += string[i+x]; char_list.append(string[i+x])
-        if x:   string[i] += string[i+x]; string[i+x]=''
-      try:
-        asian_language = any([mapping["from"] <= x <= mapping["to"] for mapping in ranges for x in char_list])
-        Log.info("str: '%s'" % str([mapping["from"] <= x <= mapping["to"] for mapping in ranges for x in char_list]))
-      except: asian_language = False
-      if char in CHARACTERS_MAP:  string[i]=CHARACTERS_MAP.get( char ); Log.info("*Character remapped in CHARACTERS_MAP: %d:'%s'  , #'%s' %s, string: '%s'" % (char, char2, char2, char_list, original_string))
-      elif not asian_language:    Log.warning("*Character missing in CHARACTERS_MAP: %d:'%s'  , #'%s' %s, string: '%s'" % (char, char2, char2, char_list, original_string))
-      i += char_len
-  return original_string if asian_language else ''.join(string)
 
 def filter_chars(string):
   for char, subst in zip(list(FILTER_CHARS), [" " for x in range(len(FILTER_CHARS))]):
@@ -397,7 +344,8 @@ CS_CRC_HEX         = com(r"[0-9a-fA-F]{8}")
 CS_VIDEO_SIZE      = com(r"\d{3,4} ?[Xx] ?\d{3,4}")
 CS_PAREN_SPACE_PAT, CS_PAREN_SPACE_REP = com(r'\([ _\.]*(?P<internal>[^\(\)]*?)[ _\.]*\)'), r'(\g<internal>)'
 CS_PAREN_EMPTY     = com(r'\([-Xx]?\)')
-def clean_string(string, no_parenthesis=False, no_whack=False, no_dash=False, no_underscore=False):
+
+def clean_string(string, no_parenthesis=False, no_whack=False, no_dash=False, no_underscore=False, no_dot=False):
   if not string: return ""                                                                                                           # if empty return empty string
   if no_parenthesis:                                                                                                                 # delete parts between parenthesis if needed
     while CS_PARENTHESIS.search(string):            string = CS_PARENTHESIS.sub(' ', string)                                         # support imbricated parrenthesis like: "Cyborg 009 - The Cyborg Soldier ((Cyborg) 009 (2001))"
@@ -409,64 +357,93 @@ def clean_string(string, no_parenthesis=False, no_whack=False, no_dash=False, no
   string = filter_chars(string)
   for char, subst in [("`", "'"), ("(", " ( "), (")", " ) ")]:                                                                       # remove leftover parenthesis (work with code a bit above)
     if char in string:                              string = string.replace(char, subst)                                             # translate anidb apostrophes into normal ones #s = s.replace('&', 'and')
-  string = string.replace("DoNoTfIlTeR", '.')                                                                                        # Replace 13DoNoTfIlTeR5 into 13.5 back
-  string = CS_CRC_HEX.sub(' ', string)                                                                                               # CRCs removal
+  string =    string.replace("DoNoTfIlTeR", '.')                                                                                        # Replace 13DoNoTfIlTeR5 into 13.5 back
+  string =    CS_CRC_HEX.sub(' ', string)                                                                                               # CRCs removal
   string = CS_VIDEO_SIZE.sub(' ', string)                                                                                            # Video size ratio removal
+  if no_dash:                                       string = string.replace("-", " ").replace(u"—", " ")
+  if no_dot:                                        string = string.replace(".", " ")                                                # replace the dash '-'
+  if no_underscore:                                 string = string.replace("_", " ")                                                # replace the underscore '_'
   if string.rstrip().endswith(", The"):             string = "The " + ''.join( string.split(", The", 1) )                            # ", The" is rellocated in front
   if string.rstrip().endswith(", A"  ):             string = "A "   + ''.join( string.split(", A"  , 1) )                            # ", A"   is rellocated in front
-  if not no_whack:                                  string = " ".join([word for word in filter(None, string.split()) if word.lower() not in WHACK]).strip()  # remove double spaces + words present in "WHACK" list #filter(None, string.split())
-  if no_dash:                                       string = string.replace("-", " ")                                                # replace the dash '-'
-  if no_underscore:                                 string = string.replace("_", " ")                                                # replace the underscore '_'
   string = CS_PAREN_EMPTY.sub('', CS_PAREN_SPACE_PAT.sub(CS_PAREN_SPACE_REP, string))                                                # Remove internal spaces in parenthesis then remove empty parenthesis
-  string = " ".join([word for word in filter(None, string.split())]).strip(" _.-")                                                   # remove multiple spaces and cleanup the ends
-  for rx in ("-"):                                  string = string[len(rx):   ].strip() if string.startswith(rx)       else string  # In python 2.2.3: string = string.strip(string, " -_") #if string.startswith(("-")): string=string[1:]
-  for rx in ("-", "- copy"):                        string = string[ :-len(rx) ].strip() if string.lower().endswith(rx) else string  # In python 2.2.3: string = string.strip(string, " -_")
-  return string
+  if not no_whack:                                  string = " ".join([word for word in string.split() if word.lower() not in WHACK]).strip(" _.-")# remove double spaces + words present in "WHACK" list #filter(None, string.split())
+  for rx in ("-"):                                  string = string[len(rx):   ] if string.startswith(rx)       else string  # In python 2.2.3: string = string.strip(string, " -_") #if string.startswith(("-")): string=string[1:]
+  for rx in ("-", "- copy"):                        string = string[ :-len(rx) ] if string.lower().endswith(rx) else string  # In python 2.2.3: string = string.strip(string, " -_")
+  return string.strip()
 
 ### Add files into Plex database ########################################################################
 def add_episode_into_plex(media, file, root, path, show, season=1, ep=1, title="", year=None, ep2="", rx="", tvdb_mapping={}, unknown_series_length=False, offset_season=0, offset_episode=0, mappingList={}):
-  global COUNTER
-  # Season/Episode Offset
-  if season > 0:  season, ep, ep2 = season+offset_season if offset_season >= 0 else 0, ep+offset_episode, ep2+offset_episode if ep2 else None
-  # Mapping List 
-  ep_orig        = "s{}e{}{}".format(season, ep, "" if not ep2 or ep==ep2 else "-{}".format(ep2))
-  ep_orig_single = "s{}e{}".format  (season, ep)
-  ep_orig_padded = "s{:>02d}e{:>03d}{}".format(int(season), int(ep), "    " if not ep2 or ep==ep2 else "-{:>03d}".format(int(ep2)))
-  if ep_orig_single in mappingList:
-    multi_ep   = 0 if ep_orig == ep_orig_single else ep2-ep
-    season, ep = mappingList[ep_orig_single][1:].split("e"); season = int(season)
-    if '-' in ep or  '+' in ep:  ep, ep2 = re.split("[-+]", ep, 1); ep, ep2 = int(ep), int(ep2) if ep2 and ep2.isdigit() else None
-    else:                        ep, ep2 = int(ep), int(ep)+multi_ep if multi_ep else None
-  elif season > 0:
-    if Dict(mappingList, 'episodeoffset'):  ep, ep2 = ep+int(Dict(mappingList, 'episodeoffset')), ep2+int(Dict(mappingList, 'episodeoffset')) if ep2 else None 
-    if Dict(mappingList, 'defaulttvdbseason') and not Dict(mappingList, 'defaulttvdbseason_a', default=False):  season = int(Dict(mappingList, 'defaulttvdbseason'))
-
+  global COUNTER 
+  
+  match = SOURCE_IDS.search(show)
+  if match:
+    if match.group('yt'):  source, id = 'youtube',             match.group('yt')
+    else:                  source, id = match.group('source'), match.group('id') 
+  else:  source, id="", ""
+  show=clean_string(show, no_dot=True)
+  if source: show = show + ' [{}-{}]'.format(source, id)
+  
+  if isinstance(show,  unicode):  ushow = show;  show  =  show.encode('utf-8')  #Plex expect Show in UTF-8
+  else:                           ushow =  show.decode('utf-8')
+  
   if title==title.lower() or title==title.upper() and title.count(" ")>0: title           = title.title()        # capitalise if all caps or all lowercase and one space at least
-  if ep<=0 and season == 0:                          COUNTER = COUNTER+1; season, ep, ep2 = 0, COUNTER, COUNTER  # s00e00    => s00e5XX (happens when ScudLee mapps to S0E0)
-  if ep<=0 and season > 0:                                                season, ep, ep2 = 0, 1, 1              # s[1-0]e00 => s00e01
-  if not ep2 or ep > ep2:                                                 ep2             = ep                   #  make ep2 same as ep for loop and tests
-  if tvdb_mapping and season > 0 :
-    max_ep_num, season_buffer = max(tvdb_mapping.keys()), 0 if unknown_series_length else 1
-    if   ep  in tvdb_mapping:               season, ep  = tvdb_mapping[ep ]
-    elif ep  > max_ep_num and season == 1:  season      = tvdb_mapping[max_ep_num][0]+season_buffer
-    if   ep2 in tvdb_mapping:               season, ep2 = tvdb_mapping[ep2]
-    elif ep2 > max_ep_num and season == 1:  season      = tvdb_mapping[max_ep_num][0]+season_buffer
-  ep_final = "s%de%d" % (season, ep)
+  if isinstance(title, unicode):  utitle= title; title = title.encode('utf-8')  #Plex expect Title in UTF-8
+  else:                           utitle= title.decode('utf-8')
+  
   if not os.path.exists(file):  file = os.path.join(root, path, file)
-  filename=os.path.basename(file)
-  for epn in range(ep, ep2+1):
-    if len(show) == 0: Log.warning("show: '%s', s%02de%03d-%03d, file: '%s' has show empty, report logs to dev ASAP" % (show, season, ep, ep2, file))
-    else:
-      tv_show = Media.Episode(show, season, epn, title, year)
-      tv_show.display_offset = (epn-ep)*100/(ep2-ep+1)
-      if filename.upper()=="VIDEO_TS.IFO":  
-        for item in os.listdir(os.path.dirname(file)) if os.path.dirname(file) else []:
-          if item.upper().startswith("VTS_01_") and not item.upper()=="VTS_01_2.VOB":  tv_show.parts.append(os.path.join(os.path.dirname(file), item))
-      else:  tv_show.parts.append(file)
-      media.append(tv_show)   # at this level otherwise only one episode per multi-episode is showing despite log below correct
-  index = "SERIES_RX-"+str(SERIES_RX.index(rx)) if rx in SERIES_RX else "ANIDB_RX-"+str(ANIDB_RX.index(rx)) if rx in ANIDB_RX else rx  # rank of the regex used from 0
-  Log.info('"{show}" s{season:>02d}e{episode:>03d}{range:s}{before} "{regex}" "{title}" "{file}"'.format(show=show, season=season, episode=ep, range='    ' if not ep2 or ep==ep2 else '-{:>03d}'.format(ep2), before=" (Orig: %s)" % ep_orig_padded if ep_orig!=ep_final else "".ljust(20, ' '), regex=index or '__', title=title if clean_string(title).replace('_', '') else "", file=filename))
-
+  if isinstance(file,  unicode):  ufile = os.path.basename(file);   file = file.encode(sys.getfilesystemencoding() or 'utf-8')
+  else:                           ufile = os.path.basename(file.decode('utf-8'))
+  
+  # Season/Episode Offset
+  if isinstance(ep, int) or isinstance(ep, str) and ep.isdigit():  #date-based
+    if season > 0:  season, ep, ep2 = season+offset_season if offset_season >= 0 else 0, int(ep)+offset_episode, int(ep2)+offset_episode if ep2 else None
+    
+    # Mapping List 
+    ep_orig        = "s{}e{}{}".format(season, ep, "" if not ep2 or ep==ep2 else "-{}".format(ep2))
+    ep_orig_single = "s{}e{}".format  (season, ep)
+    ep_orig_padded = "s{:>02d}e{:>03d}{}".format(int(season), int(ep), "    " if not ep2 or ep==ep2 else "-{:>03d}".format(int(ep2)))
+    if ep_orig_single in mappingList:
+      multi_ep   = 0 if ep_orig == ep_orig_single else ep2-ep
+      season, ep = mappingList[ep_orig_single][1:].split("e"); season = int(season)
+      if '-' in ep or  '+' in ep:  ep, ep2 = re.split("[-+]", ep, 1); ep, ep2 = int(ep), int(ep2) if ep2 and ep2.isdigit() else None
+      else:                        ep, ep2 = int(ep), int(ep)+multi_ep if multi_ep else None
+    elif season > 0:
+      if Dict(mappingList, 'episodeoffset'):  ep, ep2 = ep+int(Dict(mappingList, 'episodeoffset')), ep2+int(Dict(mappingList, 'episodeoffset')) if ep2 else None 
+      if Dict(mappingList, 'defaulttvdbseason') and not Dict(mappingList, 'defaulttvdbseason_a', default=False):  season = int(Dict(mappingList, 'defaulttvdbseason'))
+    if ep<=0 and season == 0:                          COUNTER = COUNTER+1; season, ep, ep2 = 0, COUNTER, COUNTER  # s00e00    => s00e5XX (happens when ScudLee mapps to S0E0)
+    if ep<=0 and season > 0:                                                season, ep, ep2 = 0, 1, 1              # s[1-0]e00 => s00e01
+    if not ep2 or ep > ep2:                                                 ep2             = ep                   #  make ep2 same as ep for loop and tests
+    if tvdb_mapping and season > 0 :
+      max_ep_num, season_buffer = max(tvdb_mapping.keys()), 0 if unknown_series_length else 1
+      if   ep  in tvdb_mapping:               season, ep  = tvdb_mapping[ep ]
+      elif ep  > max_ep_num and season == 1:  season      = tvdb_mapping[max_ep_num][0]+season_buffer
+      if   ep2 in tvdb_mapping:               season, ep2 = tvdb_mapping[ep2]
+      elif ep2 > max_ep_num and season == 1:  season      = tvdb_mapping[max_ep_num][0]+season_buffer
+    ep_final = "s%de%d" % (season, ep)
+    
+    for epn in range(ep, ep2+1):
+      if len(show) == 0: Log.warning("show: '%s', s%02de%03d-%03d, file: '%s' has show empty, report logs to dev ASAP" % (show, season, ep, ep2, file))
+      else:# Media.Episode expects show and title in utf-8 encoded byte string (unicode title in Plex Media Scanner/log': WARN - Warning, Unicode passed in, should be UTF-8 string for attribute 'name')
+        tv_show = Media.Episode(show, season, epn, title, year)  #tv_show = Media.Episode(show.encode('utf-8'), season, epn, title.encode('utf-8'), year)
+        tv_show.display_offset = (epn-ep)*100/(ep2-ep+1)
+        if ufile.upper()==u"VIDEO_TS.IFO":  
+          for item in os.listdir(os.path.dirname(file)) if os.path.dirname(file) else []:
+            if item.upper().startswith("VTS_01_") and not item.upper()=="VTS_01_2.VOB":  tv_show.parts.append(os.path.join(os.path.dirname(file), item).encode(sys.getfilesystemencoding() or 'utf-8'))
+        else:  tv_show.parts.append(file)  #.encode(sys.getfilesystemencoding()) gives UnicodeDecodeError: 'ascii' codec can't decode byte 0xe2 in position 101: ordinal not in range(128)
+        media.append(tv_show)   # at this level otherwise only one episode per multi-episode is showing despite log below correct
+  else:
+    ep_orig, ep_final   = 'date', 'date'
+    tv_show             = Media.Episode(show, season, None, title, year)
+    tv_show.released_at = ep.encode('utf-8') if isinstance(ep, unicode) else ep
+    tv_show.parts.append(file)
+    media.append(tv_show)
+    
+  index  = "SERIES_RX-"+str(SERIES_RX.index(rx)) if rx in SERIES_RX else "ANIDB_RX-"+str(ANIDB_RX.index(rx)) if rx in ANIDB_RX else rx  # rank of the regex used from 0
+  multi  = '    ' if not ep2 or ep==ep2 else '-{:>03d}'.format(ep2)
+  before = " (Orig: %s)" % ep_orig_padded if ep_orig!=ep_final else "".ljust(20, ' ')
+  Log.info(u'"{ushow}" s{season:>02d}e{episode:>10}{multi:s}{before} "{regex}" "{title}" "{file}"'.format(ushow=ushow, season=season, episode=ep, multi=multi, before=before, regex=index or '__', title=utitle, file=ufile))
+  #Log.info(show)
+  
 ### Get the tvdbId from the AnimeId #####################################################################
 def anidbTvdbMapping(AniDB_TVDB_mapping_tree, anidbid):
   mappingList = {}
@@ -483,7 +460,7 @@ def anidbTvdbMapping(AniDB_TVDB_mapping_tree, anidbid):
           for episode in filter(None, season.text.split(';')) if season.text else []:
             mappingList[ 's'+season.get("anidbseason") + 'e' + episode.split('-')[0] ] = 's' + season.get("tvdbseason") + 'e' + episode.split('-')[1] 
       except Exception as e: Log.error("mappingList creation exception: {}, mappingList: {}".format(e, mappingList))
-      else:   Log.info("anidb: '%s', tvbdid: '%s', name: '%s', mappingList: %s" % (anidbid, anime.get('tvdbid'), anime.xpath("name")[0].text, str(mappingList)) )
+      else:   Log.info(u"anidb: '%s', tvbdid: '%s', name: '%s', mappingList: %s" % (anidbid, anime.get('tvdbid'), anime.xpath("name")[0].text, str(mappingList)) )
       return anime.get('tvdbid'), mappingList
   Log.error("-- No valid tvbdbid found for anidbid '%s'" % (anidbid))
   return "", {}
@@ -491,18 +468,38 @@ def anidbTvdbMapping(AniDB_TVDB_mapping_tree, anidbid):
 ### extension, as os.path.splitext ignore leading dots so ".plexignore" file is splitted into ".plexignore" and "" ###
 def extension(file):  return file[1:] if file.count('.')==1 and file.startswith('.') else os.path.splitext(file)[1].lstrip('.').lower()
 
+### Make sure the path is unicode, if it is not, decode using OS filesystem's encoding ###
+def sanitize_path(p):
+  if not isinstance(p, unicode):
+    return p.decode(sys.getfilesystemencoding() or 'utf-8')
+  return p
+
+def romanToInt(s):
+  roman  = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000,'IV':4,'IX':9,'XL':40,'XC':90,'CD':400,'CM':900}
+  i, num = 0, 0
+  while i < len(s):
+    if i+1<len(s) and s[i:i+2] in roman:  num+=roman[s[i:i+2]];  i +=2
+    else:                                 num+=roman[s[i]]    ;  i +=1
+  return num
+
 ### Look for episodes ###################################################################################
 def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get called for root and each root folder, path relative files are filenames, dirs fullpath
   setup()  # Call setup to get core info. If setup is already done, it just returns and does nothing.
+  #if not files:  return  #Residual grouping folder subfolders clear
   
+  # Sanitize all path
+  msg          = [u"Scan() - dirs: {}, files: {}".format(len(dirs or []), len(files or []))]
+  files        = [sanitize_path(p) for p in files] #unicode
+  dirs         = [sanitize_path(p) for p in dirs ] #unicode
+  root         = sanitize_path(root)
+  path         = sanitize_path(path)
+  path_split   = path.split(os.sep)
   reverse_path = list(reversed(path.split(os.sep)))
-  log_filename = path.split(os.sep)[0] if path else '_root_' + root.replace(os.sep, '-')
-  anidb_xml    = None
+  log_filename = path.split(os.sep)[0] if path else '_root_'
   #VideoFiles.Scan(path, files, media, dirs, root)  # If enabled does not allow zero size files
     
   ### .plexignore file ###
   plexignore_dirs, plexignore_files, msg, source, id = [], [], [], '', ''
-  path_split = [""]+path.split(os.sep) if path else [""]
   for index, dir in enumerate(path_split):                                                   #enumerate to have index, which goes from 0 to n-1 for n items
     
     # Process Subdirectory pattern from previous folder(s)
@@ -531,58 +528,51 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
     for temp in ['stream', 'bdmv', 'video_ts']:
       if reverse_path[0].lower() == temp:  reverse_path.pop(0)
     ep, disc = clean_string(reverse_path[0], True), True
-    if len(reverse_path)>1:  reverse_path.pop(0)  #Log.info("BluRay/DVD folder detected - using as equivalent to filename ep: '%s', show: '%s'" % (ep, reverse_path[0]))
+    if len(reverse_path)>1:  reverse_path.pop(0)  #Log.info(u"BluRay/DVD folder detected - using as equivalent to filename ep: '%s', show: '%s'" % (ep, reverse_path[0]))
   else: disc = False
   
-  ### Extract season folder to reduce complexity and use folder as serie name ###
+  ### Remove season folder to reduce complexity and use folder as serie name ###
   folder_season, season_folder_first = None, False
   for folder in reverse_path[:-1]:                  # remove root folder from test, [:-1] Doesn't thow errors but gives an empty list if items don't exist, might not be what you want in other cases
+    if SOURCE_IDS.search(folder):  continue         #if it has a forced id, not a season folder
     for rx in SEASON_RX:                            # in anime, more specials folders than season folders, so doing it first
-      match = rx.search(clean_string(folder))       #
+      folder_clean = clean_string(folder, no_dash=True, no_underscore=True, no_dot=True)
+      folder_clean = folder_clean.replace(reverse_path[-1], "") 
+      match = rx.search(folder_clean)               #
       if match:                                     # get season number but Skip last entry in seasons (skipped folders)
         if rx!=SEASON_RX[-1]: 
-          folder_season = int( match.group('season')) if match.groupdict().has_key('season') and match.group('season') else 0 #break
+          if rx==SEASON_RX[-2]: folder_season = romanToInt(match.group('season'))
+          else:                 folder_season = int( match.group('season')) if match.groupdict().has_key('season') and match.group('season') else 0 #break
           if len(reverse_path)>=2 and folder==reverse_path[-2]:  season_folder_first = True
+        #msg.append(u'Removed season folder: "{}", SEASON_RX index: {}, Season: {}'.format(folder_clean, SEASON_RX.index(rx), folder_season))
         reverse_path.remove(folder)                 # Since iterating slice [:] or [:-1] doesn't hinder iteration. All ways to remove: reverse_path.pop(-1), reverse_path.remove(thing|array[0])
         break
-    if not kwargs and len(reverse_path)>1 and path.count(os.sep) and "Plex Versions" not in path and "Optimized for " not in path and len(dirs)>1:
-      Log.info("grouping folder? dirs: {}, reverse_path: {} [return]".format(dirs, reverse_path))
-      return       #if not grouping folder scan, skip grouping folder
+  folder_show = filter_chars(reverse_path[0]) if reverse_path else ""
   
-  ### Create *.filelist.log file ###
-  set_logging(root=root, filename=log_filename+'.filelist.log', mode='w') #add grouping folders filelist
-  Log.info("".ljust(157, '='))
-  Log.info("Library: '{}', root: '{}', path: '{}', files: '{}', dirs: '{}'".format(Dict(PLEX_LIBRARY, root, 'title', default="no valid X-Plex-Token.id"), root, path, len(files or []), len(dirs or [])))
-  Log.info("{} scan start: {}".format("Manual" if kwargs else "Plex", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")))
-  Log.info("plexignore_files: '{}', plexignore_dirs: '{}'".format(plexignore_files, plexignore_dirs))
-  Log.info("".ljust(157, '='))
-
-  ### Remove directories un-needed (mathing IGNORE_DIRS_RX) ###
-  for subdir in dirs[:]:
-    for rx in IGNORE_DIRS_RX:
-      if rx.match(os.path.basename(subdir)):
-        dirs.remove(subdir)
-        Log.info("# Folder: '{}' match '{}' pattern: '{}'".format(os.path.relpath(subdir, root), 'IGNORE_DIRS_RX', rx))
-        break  #skip dirs to be ignored
-    else:  Log.info("[folder] " + os.path.relpath(subdir, root))
+  ### Remove un-needed sub-directories (mathing IGNORE_DIRS_RX) ###
+  for dir in dirs[:]:
+    for rx in IGNORE_DIRS_RX:                                   # loop rx for folders to ignore
+      if rx.match(os.path.basename(dir)):                      # if folder match rx
+        msg.append(u"Removed subdir: '{}' match '{}' pattern: '{}'".format(dir, 'IGNORE_DIRS_RX', IGNORE_DIRS_RX.index(rx)))
+        dirs.remove(dir)
+        break
+  #msg.append(u'dirs ({}): {}, Files({}): {}'.format( len(dirs), dirs, len(files), files ))
   
   ### Remove files un-needed (ext not in VIDEO_EXTS, mathing IGNORE_FILES_RX or .plexignore pattern) ###
-  for entry in msg:  Log.info(entry)
   for file in sorted(files or [], key=natural_sort_key):  #sorted create list copy allowing deleting in place
     ext = file[1:] if file.count('.')==1 and file.startswith('.') else os.path.splitext(file)[1].lstrip('.').lower()  # Otherwise ".plexignore" file is splitted into ".plexignore" and ""
     if ext in VIDEO_EXTS:
       for rx in IGNORE_FILES_RX + [cic(entry) for entry in plexignore_files]:  # Filter trailers and sample files
         if rx.match(os.path.basename(file)):
-          Log.info("# File: '{}' match '{}' pattern: '{}'".format(os.path.relpath(file, root), 'IGNORE_FILES_RX' if rx in IGNORE_FILES_RX else '.plexignore', rx))
+          msg.append(u"# File: '{}' match '{}' pattern: '{}'".format(os.path.relpath(file, root), 'IGNORE_FILES_RX' if rx in IGNORE_FILES_RX else '.plexignore', rx))
           files.remove(file)
           break
-      else:
-        try:                    Log.info("[file] " + os.path.relpath(file, root))
-        except Exception as e:  Log.info('exception: {}, file: {}, root: {}'.format(e, file, root))
+      #msg.append(u'{}'.format(os.path.relpath(file, root)))
     else:
       files.remove(file)
-      Log.info("# File: '{}' not in '{}'".format(os.path.relpath(file, root), 'VIDEO_EXTS'))
-      
+      if os.path.splitext(file)[1] not in ('.log', '.plexignore'):
+        msg.append(u"Unknown extension File: '{}'".format(os.path.relpath(file, root)))
+  
       ### ZIP ###
       if ext == 'zip':
         Log.info(file)
@@ -591,7 +581,7 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
           zext = os.path.splitext(zip_archive_filename)[1][1:]  #zname, zext = ...  #zext = zext[1:]
           if zext in VIDEO_EXTS:
             files.append( zip_archive_filename)  #filecontents = zip_archive.read(zip_archive_filename)
-            Log.info('- '+zip_archive_filename) 
+            #Log.info(u'{}'.format(zip_archive_filename)) 
       
       ### 7zip ###
       ### RAR ###
@@ -600,50 +590,55 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
       #for rar_archive_filename in rar_archive.infolist():
       #  zname, zext = os.path.splitext(rar_archive_filename.filename); zext = zext[1:]
       #  if zext in VIDEO_EXTS:  files.append(rar_archive_filename.filenamee)  #filecontents = rar_archive.read(rar_archive_filename)
-      
-  if not files:
-    if path and len(dirs)!=1:
-      Log.info("[no files detected] Grouping folder skip as >1 folder [return]")
-      return  #Grouping folders could call subfolders so cannot return if path is empty aka for root call
-    else: Log.info("[no files detected] continuing, single folder")
-  Log.info("".ljust(157, '='))
-  Log.info("{} scan end: {}".format("Manual" if kwargs else "Plex", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")))
 
-  ### Logging to *.scanner.log ###
-  set_logging(root=root, filename=log_filename+'.scanner.log', mode='w') #if recent or kwargs else 'w'
-  Log.info("".ljust(157, '='))
-  Log.info("Library: '{}', root: '{}', path: '{}', files: '{}', dirs: '{}'".format(Dict(PLEX_LIBRARY, root, 'title', default="no valid X-Plex-Token.id"), root, path, len(files or []), len(dirs or [])))
-  Log.info("{} scan start: {}".format("Manual" if kwargs else "Plex", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")))
-  Log.info("".ljust(157, '='))
+  #Plex folder call skip for Grouping folders with 2+ subfolders
+  set_logging(root=root, filename=log_filename+'.filelist.log', mode='a' if path else 'w')  #Logging to *.filelist.log
+  #Log.info(u'#1# Call: "{}", path: "{}"'.format('Root' if kwargs else 'Plex', path)) 
+  for file in files:  Log.info(u'{}'.format(os.path.relpath(file, root)))                                 #Create filelist
   
-  #### Folders, Forced ids, grouping folders ###
-  folder_show                                = filter_chars(reverse_path[0]) if reverse_path else ""
-  array, misc_words, misc_count, mappingList = (), [], {}, {}
-  tvdb_mapping, unknown_series_length        = {}, False
+  ### Logging ###
+  if not kwargs:
+    set_logging(root=root, filename='_root_.scanner.log',  mode='a')  #Logging to *.scanner.log
+    Log.info(u'Call: "Plex", dirs({:>2}), files({:>3}), path: "{}"'.format(len(dirs), len(files), path))
+  
+  set_logging(root=root, filename=log_filename+'.scanner.log',  mode='a' if path else 'w')  #Logging to *.scanner.log
+  Log.info(u"".ljust(157, '='))
+  Log.info(u'Call: "{}", path: "{}", folder_show: "{}", dirs ({}), files ({})'.format('Root' if kwargs else 'Plex', path, folder_show, len(dirs), len(files)))
+  #Log.info(u"reverse_path: {}, original value: {}, folder_show: {}".format(reverse_path, list(reversed(path.split(os.sep)))))
+  #Log.info(u"{} scan start: {}".format("Grouping folder" if kwargs else "Plex", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")))
+  if path and not files:  return
+  Log.info(u"".ljust(157, '='))
+  if msg:
+    for entry in msg:  Log.info(entry)
+    Log.info(u"".ljust(157, '='))
+  
+  array, misc_words, misc_count, mappingList  = (), [], {}, {}
+  tvdb_mapping, unknown_series_length         = {}, False
   offset_match, offset_season, offset_episode = None, 0, 0
-  
   if path:
     ### Grouping folders skip , unless single series folder ###
     if not kwargs and len(reverse_path)>1 and not season_folder_first:  
       parent_dir    = os.path.join(root, reverse_path[-1])  # folder at root fullpath
       parent_dir_nb = len([file for dir in os.listdir(parent_dir) if os.path.isdir(os.path.join(parent_dir, dir))]) #How many folders in folder at root
       if len(reverse_path)>1 and parent_dir_nb>1 and "Plex Versions" not in parent_dir and "Optimized for " not in parent_dir: 
-        Log.info("### Grouping folders skipped, will be handled by root level scan ### [return]")
+        Log.info(u'### Grouping folders skipped, will be handled by root level scan ### [return]')
+        Log.info(u"".ljust(157, '='))
+        Log.info(u'')
         return  #Grouping folders Plex call, but mess after one season folder is ok
-      else: Log.info("### Grouping folders, not skipped as single series folder ###")
+      else: Log.info(u"### Grouping folders, not skipped as single series folder ###")
 	  
     ### Forced guid modes ###
-    match = SOURCE_IDS.search(folder_show) or (SOURCE_IDS.search(folder_show) if len(reverse_path)>1 else False)
+    match = SOURCE_IDS.search(folder_show)
     if match:
       if match.group('yt'):  source, id = 'youtube',             match.group('yt')
       else:                  source, id = match.group('source'), match.group('id') 
-      Log.info('Forced ID (series folder) - source: "{}", id: "{}"'.format(source, id))
+      Log.info(u'Forced ID (series folder) - source: "{}", id: "{}"'.format(source, id))
     else:
       for file in SOURCE_ID_FILES:
         file_fullpath = os.path.join(root, os.sep.join(list(reversed(reverse_path))), file)
         if os.path.isfile(file_fullpath):
           source, id = file.rstrip('.id'), read_file(file_fullpath).strip()
-          Log.info('Forced ID (source file) - source: "{}", id: "{}"'.format(source, id))
+          Log.info(u'Forced ID (source file) - source: "{}", id: "{}"'.format(source, id))
           folder_show = "%s [%s-%s]" % (clean_string(reverse_path[0]), os.path.splitext(file)[0], id)
           break
       else:
@@ -655,14 +650,14 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
               db, sid = filebot.series_id(attr).split('_')  # db = attr_get(attr, 'seriesInfo', 'database')  # id = attr_get(attr, 'seriesInfo', 'id')  #if attr.get('imdbId'):  db, id = 'movie', movie_id(attr)
               if db in FileBot and sid:  # movies: mid = movie_id(attr), imdb_id = attr.get('imdbId'),tmdb_id = attr.get('tmdbId')
                 source, id = FileBot[db], sid
-                Log.info('FileBot Xattr found, source: {}, id: {}, attr: {}'.format(source, id, attr))
+                Log.info(u'FileBot Xattr found, source: {}, id: {}, attr: {}'.format(source, id, attr))
                 folder_show = id if source=='tvdb' else "%s [%s-%s]" % (clean_string(reverse_path[0]), source, id)  #or source=='tmdb' in movie scanner
                 break
           else:
-            Log.info('No forced id found in series folder name nor id file')
+            Log.info(u'No forced id found in series folder name nor id file')
             source, id = "", ""
             folder_show = folder_show.replace(" - ", " ").split(" ", 2)[2] if folder_show.lower().startswith(("saison","season","series","Book","Livre")) and len(folder_show.split(" ", 2))==3 else clean_string(folder_show) # Dragon Ball/Saison 2 - Dragon Ball Z/Saison 8 => folder_show = "Dragon Ball Z"
-    Log.info("".ljust(157, '-'))
+    #Log.info(u"".ljust(157, '-'))
     
     ### Calculate offset for season or episode (tvdb 2/3/4 mode's offset_episode adjustment is done after tvdb_mapping is populated) ###
     if source.startswith('tvdb') or source.startswith('anidb'):  # 
@@ -676,19 +671,19 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
     if source.startswith('tvdb'):
       #tvdb2, tvdb3 - Absolutely numbered serie displayed with seasons with episodes re-numbered (tvdb2) or staying absolute (tvdb3, for long running shows without proper seasons like dbz, one piece)
       if source in ('tvdb2', 'tvdb3'): 
-        Log.info("TVDB season mode ({}) enabled".format(source))
+        Log.info(u"TVDB season mode ({}) enabled".format(source))
         try:
           #Load series episode pages and group them in one dict
           episodes_json, page = [], 1
           while page not in (None, '', 'null'):
             episodes_json_page = json.loads(read_cached_url(TVDB_API2_EPISODES.format(id, page), foldername=os.path.join('TheTVDB','json',id), filename="episodes_page{}_en.json".format(page)))
-            episodes_json.extend(episodes_json_page['data'] if 'data' in episodes_json_page else [])  #Log.Info('TVDB_API2_EPISODES: {}, links: {}'.format(TVDB_API2_EPISODES.format(id, page), Dict(episodes_json_page, 'links')))
+            episodes_json.extend(episodes_json_page['data'] if 'data' in episodes_json_page else [])  #Log.Info(u'TVDB_API2_EPISODES: {}, links: {}'.format(TVDB_API2_EPISODES.format(id, page), Dict(episodes_json_page, 'links')))
             page = Dict(episodes_json_page, 'links', 'next')
           
           # SORT JSON EPISODES
           sorted_episodes_json = {}
           for episode_json in episodes_json: sorted_episodes_json['s{:02d}e{:03d}'.format(Dict(episode_json, 'airedSeason'), Dict(episode_json, 'airedEpisodeNumber'))] = episode_json
-          sorted_episodes_index_list = sorted(sorted_episodes_json, key=natural_sort_key)  #Log.Info('len: {}, sorted_episodes_index_list: {}'.format(len(sorted_episodes_index_list), sorted_episodes_index_list))
+          sorted_episodes_index_list = sorted(sorted_episodes_json, key=natural_sort_key)  #Log.Info(u'len: {}, sorted_episodes_index_list: {}'.format(len(sorted_episodes_index_list), sorted_episodes_index_list))
           
           # Loop through sorted episodes list
           absolute_number, tvdb_mapping = 0, {}
@@ -704,10 +699,10 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
           file_fullpath = os.path.join(root, path, "tvdb4.mapping")
           if os.path.isfile(file_fullpath):
             tvdb4_mapping_content = read_file(file_fullpath).strip()
-            Log.info("TVDB season mode (%s) enabled, tvdb4 mapping file: '%s'" % (id, file_fullpath))
+            Log.info(u"TVDB season mode (%s) enabled, tvdb4 mapping file: '%s'" % (id, file_fullpath))
           else:
             tvdb4_mapping_content = etree.fromstring(read_cached_url(ASS_MAPPING_URL).strip()).xpath("/tvdb4entries/anime[@tvdbid='%s']" % id)[0].text.strip()
-            Log.info("TVDB season mode (%s) enabled, tvdb4 mapping url: '%s'" % (id, ASS_MAPPING_URL))
+            Log.info(u"TVDB season mode (%s) enabled, tvdb4 mapping url: '%s'" % (id, ASS_MAPPING_URL))
           for line in filter(None, tvdb4_mapping_content.splitlines()):
             season = line.strip().split("|")
             for absolute_episode in range(int(season[1]), int(season[2])+1):  tvdb_mapping[absolute_episode] = (int(season[0]), int(absolute_episode)) 
@@ -720,17 +715,17 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
       #tvdb5 - TheTVDB to absolute index order
       elif source=='tvdb5':
         tvdb_guid_url = TVDB_API1_URL % id
-        Log.info("TVDB season mode (%s) enabled, tvdb serie rl: '%s'" % (source, tvdb_guid_url))
+        Log.info(u"TVDB season mode (%s) enabled, tvdb serie rl: '%s'" % (source, tvdb_guid_url))
         try:
           tvdbanime = etree.fromstring(read_cached_url(tvdb_guid_url, foldername=os.path.join('TheTVDB','json',id), filename="series_en.xml"))
           for episode in tvdbanime.xpath('Episode'):
             if episode.xpath('absolute_number')[0].text:
               mappingList['s%se%s'%(episode.xpath('SeasonNumber')[0].text, episode.xpath('EpisodeNumber')[0].text)] = "s1e%s" % episode.xpath('absolute_number')[0].text
-          Log.info("mappingList: %s" % str(mappingList))
+          Log.info(u"mappingList: %s" % str(mappingList))
         except Exception as e:  Log.error("xml loading issue, Exception: '%s''" % e)
       
-      if tvdb_mapping:  Log.info("unknown_series_length: %s, tvdb_mapping: %s (showing changing seasons/episodes only)" % (unknown_series_length, str({x:tvdb_mapping[x] for x in tvdb_mapping if tvdb_mapping[x]!=(1,x)})))  #[for x in tvdb_mapping if tvdb_mapping[x]!=(1,x)]
-      Log.info("".ljust(157, '-'))
+      if tvdb_mapping:  Log.info(u"unknown_series_length: %s, tvdb_mapping: %s (showing changing seasons/episodes only)" % (unknown_series_length, str({x:tvdb_mapping[x] for x in tvdb_mapping if tvdb_mapping[x]!=(1,x)})))  #[for x in tvdb_mapping if tvdb_mapping[x]!=(1,x)]
+      Log.info(u"".ljust(157, '-'))
         
     ### Calculate offset for season or episode (must be done after 'tvdb_mapping' is populated) ###
     if offset_match:  # Can't retest as fist go removed the offset entry from 'id' so just reuse earlier matching results
@@ -741,13 +736,13 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
         season_ep1      = min([e[1] for e in tvdb_mapping.values() if e[0] == offset_season+1]) if source in ['tvdb3','tvdb4'] else 1
         offset_episode += list(tvdb_mapping.keys())[list(tvdb_mapping.values()).index((offset_season+1,season_ep1))] - 1
       if offset_season!=0 or offset_episode!=0:
-        Log.info("Manual file offset - (season: '%s', episode: '%s') -> (offset_season: '%s', offset_episode: '%s')" % (match_season, match_episode, offset_season, offset_episode))
-        Log.info("".ljust(157, '-'))
+        Log.info(u"Manual file offset - (season: '%s', episode: '%s') -> (offset_season: '%s', offset_episode: '%s')" % (match_season, match_episode, offset_season, offset_episode))
+        Log.info(u"".ljust(157, '-'))
     
     ### forced guid modes - anidb2/3/4 (requires ScudLee's mapping xml file) ###
     if source in ["anidb2", "anidb3", "anidb4"]:
       a2_tvdbid = ""
-      Log.info("AniDB mode (%s) enabled, loading mapping xml file (Local->ASS mod->ScudLee master)" % source)
+      Log.info(u"AniDB mode (%s) enabled, loading mapping xml file (Local->ASS mod->ScudLee master)" % source)
       
       # Local custom mapping file
       dir = os.path.join(root, path)
@@ -755,9 +750,9 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
         scudlee_filename_custom = os.path.join(dir, ANIDB_TVDB_MAPPING_LOC)
         if os.path.exists( scudlee_filename_custom ):
           try:
-            Log.info("Loading local custom mapping from local: %s" % scudlee_filename_custom)
+            Log.info(u"Loading local custom mapping from local: %s" % scudlee_filename_custom)
             a2_tvdbid, mappingList = anidbTvdbMapping(etree.fromstring(read_file(scudlee_filename_custom)), id)
-          except:  Log.info("Invalid local custom mapping file content")
+          except:  Log.info(u"Invalid local custom mapping file content")
           else:    break
         dir = os.path.dirname(dir) if len(dir) > len(root) else ''  # Clear variable if we've just finished processing down to (and including) root
       
@@ -774,13 +769,13 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
       # Set folder_show from successful mapping
       if a2_tvdbid: folder_show = clean_string(folder_show) + " [tvdb-%s]" % a2_tvdbid
       else: folder_show = clean_string(folder_show) + " [anidb-%s]" % (id)
-      Log.info("".ljust(157, '-'))
+      Log.info(u"".ljust(157, '-'))
     
     if source in ["anidb3", "anidb4"]:
       a3_tvdbid, season_map, relations_map, max_season, new_season, new_episode = "", {}, {}, 0, '', ''
-      Log.info("AniDB mode (%s) enabled, loading season and relation mapping for all associated tvdbid entries" % source)
+      Log.info(u"AniDB mode (%s) enabled, loading season and relation mapping for all associated tvdbid entries" % source)
       if source=="anidb3" and Dict(mappingList, 'defaulttvdbseason', default='1') != '0':
-        Log.info("defaulttvdbseason: '%s', is not season 0 so using unmodified mapping" % Dict(mappingList, 'defaulttvdbseason'))
+        Log.info(u"defaulttvdbseason: '%s', is not season 0 so using unmodified mapping" % Dict(mappingList, 'defaulttvdbseason'))
       else:
         try:
           AniDB_TVDB_mapping_tree     = etree.fromstring(read_cached_url(ANIDB_TVDB_MAPPING,     foldername='AnimeLists'))  # Load ScudLee mapping
@@ -828,7 +823,7 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
                 else:                                         relations_map[entry][anime.get('type')] = [anime.get('id')]      # First anidbid with a new relation type
             #### Note: Below must match hama (variable names are different but logic matches) ####
             def get_prequel_info(prequel_id):
-              #Log.info("get_prequel_info(prequel_id) = %s" % prequel_id)
+              #Log.info(u"get_prequel_info(prequel_id) = %s" % prequel_id)
               if source=="anidb3":
                 if season_map[prequel_id]['min'] == 0 and 'Prequel' in relations_map[prequel_id] and relations_map[prequel_id]['Prequel'][0] in season_map:
                   a, b = get_prequel_info(relations_map[prequel_id]['Prequel'][0])             # Recurively go down the tree following prequels
@@ -849,58 +844,93 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
               if 'Prequel' in relations_map[id] and relations_map[id]['Prequel'][0] in season_map:
                 new_season, new_episode = get_prequel_info(relations_map[id]['Prequel'][0])    # Recurively go down the tree following prequels to the TVDB season 1 AniDB prequel 
           
-          #Log.info("season_map: %s" % str(season_map)) #Log.info("relations_map: %s" % str(relations_map))
+          #Log.info(u"season_map: %s" % str(season_map)) #Log.info(u"relations_map: %s" % str(relations_map))
           if str(new_season).isdigit():  # A new season & eppisode offset has been assigned 
             mappingList['defaulttvdbseason'], mappingList['episodeoffset'] = str(new_season), str(new_episode)
             for key in mappingList.keys():  # Clear out possible mapping list entries for season 1 to leave the default season and episode offset to be applied while keeping season 0 mapping
               if key.startswith("s1"): del mappingList[key]
-            Log.info("anidbid: '%s', tvdbid: '%s', max_season: '%s', mappingList: %s, season_map: %s" % (id, a3_tvdbid, max_season, str(mappingList), str(season_map)))
-          else: Log.info("anidbid: '%s', tvdbid: '%s', max_season: '%s', season_map: %s, no override set so using unmodified mapping" % (id, a3_tvdbid, max_season, str(season_map)))
+            Log.info(u"anidbid: '%s', tvdbid: '%s', max_season: '%s', mappingList: %s, season_map: %s" % (id, a3_tvdbid, max_season, str(mappingList), str(season_map)))
+          else: Log.info(u"anidbid: '%s', tvdbid: '%s', max_season: '%s', season_map: %s, no override set so using unmodified mapping" % (id, a3_tvdbid, max_season, str(season_map)))
           if a3_tvdbid: folder_show = clean_string(folder_show) + " [tvdb%s-%s]" % ('' if source=="anidb3" else "6", a3_tvdbid)
           else: folder_show = clean_string(folder_show) + " [anidb-%s]" % (id)
         except Exception as e:  Log.error("Error parsing content, Exception: '%s'" % e)
-      Log.info("".ljust(157, '-'))
+      Log.info(u"".ljust(157, '-'))
 
-    ### Youtube ###
-    def getmtime(name):  return os.path.getmtime(os.path.join(root, path, name))
+    ### Youtube ##################################################################################################################################
     if source.startswith('youtube') and len(id)>2 and id[0:2] in ('PL', 'UU', 'FL', 'LP', 'RD'):
-      try:
-        xml = etree.fromstring(read_file(os.path.join(PLEX_ROOT, 'Plug-in Support', 'Preferences', 'com.plexapp.agents.youtube.xml')))
-        API_KEY = xml.xpath("/PluginPreferences/YouTube-Agent_youtube_api_key")[0].text.strip()
-        Log.info("API_KEY: '{}'".format(API_KEY))
-      except Exception as e:  Log.info('exception: {}'.format(e)); API_KEY='AIzaSyC2q8yjciNdlYRNdvwbb7NEcDxBkv1Cass'
-      
-      YOUTUBE_PLAYLIST_ITEMS = 'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=50&playlistId={}&key='+API_KEY
-      iteration, json_full, json_page = 0, {}, {'nextPageToken': None}
-      while 'nextPageToken' in json_page and iteration <= 50:
-        url=YOUTUBE_PLAYLIST_ITEMS.format(id)+( '&pageToken='+Dict(json_page, 'nextPageToken') if Dict(json_page, 'nextPageToken') else '')
-        Log.info('[{:>2}] {}'.format(iteration, url))
-        try:                                  json_page = json.loads(read_url(url))
-        except Exception as e:                json_page={};  Log.info('exception: {}, url: {}'.format(e, url))
-        else:
-          if json_full:  json_full['items'].extend(json_page['items'])
-          else:          json_full = json_page
-        iteration +=1
-      Log.info('---- count: {}'.format(len(json_full['items'])))
-      
-      if json_full:
+      try:                    API_KEY = etree.fromstring(read_file(os.path.join(PLEX_ROOT, 'Plug-in Support', 'Preferences', 'com.plexapp.agents.youtube.xml'))).xpath("/PluginPreferences/YouTube-Agent_youtube_api_key")[0].text.strip()
+      except Exception as e:  API_KEY='AIzaSyC2q8yjciNdlYRNdvwbb7NEcDxBkv1Cass';  Log.info(u'exception: {}'.format(e))
+      folder_show = "%s [%s-%s]" % (clean_string(reverse_path[0]), 'youtube', id)
+          
+      ### YouTube-dl -J --dump-single-json Playlist file load ###
+      json_playlist_file = os.path.join(root, path, 'Playlist.info.json')  #"{}.info.json".format(id))
+      if os.path.exists(json_playlist_file):
+        Log.info(u'YouTube-dl Playlist file load {}'.format(os.path.relpath(json_playlist_file, root)))
+        json_playlist = Dict(json.loads(read_file(json_playlist_file)), 'entries')
         for file in os.listdir(os.path.join(root, path)):
-          if extension(file) not in VIDEO_EXTS or os.path.isdir(os.path.join(root, path, file)):
-            continue  #files only with video extensions
-          for rank, video in enumerate(Dict(json_full, 'items') or {}, start=1):
-            VideoID = video['snippet']['resourceId']['videoId']
-            if VideoID and VideoID in file.decode('utf-8'):
-              Log.info('[{}] rank: {:>3} in file: {}'.format(VideoID, rank, file))
-              add_episode_into_plex(media, os.path.join(root, path, file), root, path, folder_show, int(folder_season if folder_season is not None else 1), rank, video['snippet']['title'].encode('utf8'), "", rank, 'YouTube', tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList)
-              break
-          else:  Log.info('None of video IDs found in filename: {}'.format(file))
-        Log.info('[return]')
-        return  
-      else:  Log.info('json_full is empty')
-    files_per_date = []
-    if id.startswith('UC') or id.startswith('HC'):
-      files_per_date = sorted([os.path.basename(file) for file in files], key=natural_sort_key if SW_YOUTUBE_DATE else getmtime) #to have latest ep first, add: ", reverse=True"
-      Log.info('files_per_date: {}'.format(files_per_date))
+          if extension(file) not in VIDEO_EXTS or os.path.isdir(os.path.join(root, path, file)):  continue  #files only with video extensions
+          for rank, video in enumerate(json_playlist or {}, start=1):
+            VideoID = Dict(video, 'id')
+            if VideoID and VideoID in file:  add_episode_into_plex(media, os.path.join(root, path, file), root, path, folder_show, int(folder_season if folder_season is not None else 1), rank, Dict(video, 'title'), "", rank, 'YouTube', tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList);  break
+          else:                              Log.info(u'None of video IDs found in filename: {}'.format(file))# entry["_filename"], entry["playlist_index"], entry['upload_date'], 
+        return
+      else:  ### YouTube Playlist API call #######################################################################################################
+        Log.info(u'YouTube Playlist API call')
+        YOUTUBE_PLAYLIST_ITEMS = 'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId={}&key='+API_KEY
+        json_full, json_page = [], {'nextPageToken': None}
+        while 'nextPageToken' in json_page:  # and iteration <= 50:
+          url=YOUTUBE_PLAYLIST_ITEMS.format(id)
+          Log.info(u'{}'.format(url))
+          try:                    json_page = json.loads(read_url(url +( '&pageToken='+Dict(json_page, 'nextPageToken') if Dict(json_page, 'nextPageToken') else '')))
+          except Exception as e:  json_page = {};  Log.info(u'exception: {}, url: {}'.format(e, url))
+          else:                   json_full.extend( Dict(json_page, 'items', default=[]) )
+          totalResults = Dict(json_page, "pageInfo", "totalResults")  #iteration   +=1
+          reverse      = False if source=='youtube3' else Dict(json_full[0], "snippet", "publishedAt") > Dict(json_full[-1], "snippet", "publishedAt")  #Dict(video, 'contentDetails', 'videoPublishedAt')
+        if json_full:
+          Log.info(u'---- totalResults: {}, reverse: {}, os.listdir(os.path.join(root, path): {}'.format(totalResults, reverse, os.listdir(os.path.join(root, path))))
+          for filename in os.listdir(os.path.join(root, path)):
+            file = os.path.join(root, path, filename)
+            if extension(filename) not in VIDEO_EXTS or os.path.isdir(file):  continue  #only files with video extensions
+            for rank, video in enumerate(sorted(json_full, key = lambda i: (i['contentDetails']['videoPublishedAt'])) if source=='youtube3' else json_full, start=0):
+              epNumber = totalResults - rank if reverse else rank+1
+              VideoID  = Dict(video, 'snippet', 'resourceId', 'videoId') or Dict(video, 'contentDetails', 'videoId')
+              if VideoID and VideoID in filename:  add_episode_into_plex(media, file, root, path, folder_show, int(folder_season or 1), epNumber, video['snippet']['title'].encode('utf8'), "", "", 'YouTube', tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList);  break
+            else:  Log.info(u'None of video IDs found in filename: {}'.format(filename))
+          return
+        else:  Log.info(u'json_full is empty')
+    
+    ### YouTube Channel ###
+    if source.startswith('youtube') and id.startswith('UC') or id.startswith('HC'):  # or not json_playlist and not json_full and source.startswith('youtube') and len(id)>2 and id[0:2] in ('PL', 'UU', 'FL', 'LP', 'RD')
+      mapping = {} #mapping[season][ep]=filename  if dupe #mapping[season][ep]=index count, mapping[season][epxx] = filename, 
+      for file in files:  #to have latest ep first, add: ", reverse=True"
+        filename = os.path.join(root, path, file)
+        if extension(file) not in VIDEO_EXTS or os.path.isdir(filename):  continue  #only files with video extensions
+        for rx in DATE_RX:
+          match = rx.search(file)  # file starts with "yyyy-mm-dd" "yyyy.mm.dd" "yyyy mm dd" or "yyyymmdd"
+          if match:
+            season, episode = match.group('year'), '{}-{:>02}-{:>02}'.format(match.group('year'), match.group('month'), match.group('day'))
+            break  
+        else:
+          filedate        = time.gmtime(os.path.getmtime(filename))
+          season, episode = str(filedate[0]), '{}-{:>02}-{:>02}'.format(filedate[0], filedate[1], filedate[2])
+        if isinstance(season,  unicode):  season  =  season.encode('utf-8')
+        
+        if not Dict(mapping, season, episode):  SaveDict(filename, mapping, season, episode)
+        else:
+          if isinstance(Dict(mapping, season, episode), int):  index = Dict(mapping, season, episode) + 1
+          else:                                                index = 2;  SaveDict(Dict(mapping, season, episode), mapping, season, episode+'01')  #save filename under duplicate episode naming convention            
+          SaveDict(index,    mapping, season, episode)
+          SaveDict(filename, mapping, season, episode + '{:02d}'.format(index))
+          episode = episode + '{:02d}'.format(index)
+        Log.info('season: {}, episode: {}, filename: {},'.format(season, episode, filename))
+        
+      for season in mapping or []:  #to have latest ep first, add: ", reverse=True"
+        Log.info('season: {}, keys({}): {}'.format(season, len(mapping[season]), mapping[season].keys()))
+        for episode in mapping[season] or []:
+          filename = Dict(mapping, season, episode)
+          if not isinstance(filename, int):
+            add_episode_into_plex(media, filename, root, path, folder_show if not id or id in folder_show else folder_show+'['+id+']', int(season), episode, os.path.basename(filename), season, "", "Youtube Date", tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList)
+      return
       
     ### Build misc variable to check numbers in titles ###
     misc, length = "|", 0  # put all filenames in folder in a string to count if ep number valid or present in multiple files ###clean_string was true ###
@@ -914,19 +944,19 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
           if clean_string(file, no_whack=True).lower().startswith(prefix.lower()):  misc+= clean_string(os.path.basename(file).lower().replace(prefix.lower(), " ", 1), True)+"|"; break
         else:   misc+= clean_string(os.path.basename(file), True)+"|"
       for separator in [' ', '.', '-', '_']:  misc = misc.replace(separator, '|') 
-      misc = "|".join([s for s in misc.split('|') if s])  #Log.info("misc: '%s'" % misc)
+      misc = "|".join([s for s in misc.split('|') if s])  #Log.info(u"misc: '%s'" % misc)
       for item in misc.split('|'):  misc_count[item] = misc_count[item]+1 if item in misc_count else 1
       for item in misc_count:
         if item and (misc_count[item] >= len(files) and len(files)>=6 or misc_count[item]== max(misc_count.values()) and max(misc_count.values())>3 ):  misc_words.append(item)
-        #misc = misc.replace("|%s|" % item, '|')  #Log.info("misc_words: '%s', misc_count: '%s'" % (str(misc_words), str(misc_count)))
+        #misc = misc.replace("|%s|" % item, '|')  #Log.info(u"misc_words: '%s', misc_count: '%s'" % (str(misc_words), str(misc_count)))
       misc_words.sort(key=len, reverse=True)  # Sort by string length so largest words are taken out first so smaller words that are in the larger words are not an issue
-      Log.info('misc_count: {}'.format(misc_count))
-      Log.info('misc_words: {}'.format(misc_words))
-      Log.info("".ljust(157, '-'))
+      #Log.info(u'misc_count: {}'.format(misc_count))
+      #Log.info(u'misc_words: {}'.format(misc_words))
+      #Log.info(u''.ljust(157, '-'))
   
   ### File main loop ###
   global COUNTER
-  COUNTER, movie_list, AniDB_op, standard_holding, unknown_holding, run_count = 500, {}, {}, [], [], 1
+  COUNTER, movie_list, AniDB_op, standard_holding, unknown_holding, run_count, anidb_xml = 500, {}, {}, [], [], 1, None
   while True:
     for file in files:
       show, season, ep2, title, year = folder_show, folder_season if folder_season is not None else 1, None, "", ""
@@ -939,7 +969,7 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
       else:
         filename = os.path.splitext(os.path.basename(file))[0]
         if not path:  root_filename = filename
-        filename = encodeASCII(filename)
+        filename = sanitize_path(filename)
       
       ### remove cleansed folder name from cleansed filename or keywords otherwise ###
       if path and run_count == 1:
@@ -963,33 +993,18 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
       if not path:
         root_filename = clean_string(root_filename.split(ep)[0] if ep else root_filename)
         show          = root_filename
-        
-      ### YouTube Channel numbering ###
-      if source.startswith('youtube') and id.startswith('UC'):
-        filename, folder_season = os.path.basename(file), 0  # sometime youtube-dl gets bad upload date and sets date to NA, mark these as season 0 (specials) so user notices and can fix if wanted
-        if SW_YOUTUBE_DATE:
-          match = re.match(r"([12]\d{3}[-. ]?(0[1-9]|1[0-2])[-. ]?(0[1-9]|[12]\d|3[01]))",filename)
-          if match:  folder_season = int(filename[0:4])  # file starts with "yyyy-mm-dd" "yyyy.mm.dd" "yyyy mm dd" or "yyyymmdd", so take first four digits as the season year
-          Log.info('Youtube folder season date {}, season: {}, file: {}'.format("regex" if match else "error set season 0", folder_season, filename))
-        else:
-          folder_season = time.gmtime(os.path.getmtime(os.path.join(root, path, filename)))[0]  # no info from file or flag not set, revert to original way of reading the file date
-          Log.info('Youtube folder season gmtime,  season: {}, file: {}'.format(folder_season, filename))
-        ep = files_per_date.index(filename)+1 if filename in files_per_date else 0
-        standard_holding.append([os.path.join(root, path, filename), root, path, folder_show if id in folder_show else folder_show+'['+id+']', int(folder_season if folder_season is not None else 1), ep, filename, folder_season, ep, 'YouTube', tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList])
-        continue
-        
+      
       ### Date Regex ###
       for rx in DATE_RX:
         match = rx.search(ep)
         if match:
-          year, month, day = int(match.group('year')), int(match.group('month')), int(match.group('day'))
-          Log.info('year: {}, mont: {}, day: {}, ep: {}, file: {}'.format(year, month, day, ep, file))
-          continue
-          # Use the year as the season.
-          #tv_show = Media.Episode(show, year, None, None, None)
-          #tv_show.released_at = '%d-%02d-%02d' % (year, month, day)
-          #tv_show.parts.append(i)
-          #mediaList.append(tv_show)
+          season, ep = int(match.group('year')), '{}-{}-{}'.format(match.group('year'), match.group('month'), match.group('day'))
+          Log.info(u'season: {}, ep: {}'.format(season, ep))
+          add_episode_into_plex(media, file, root, path, folder_show if id in folder_show else folder_show+'['+id+']', season, ep, filename, season, "", "Youtube Date Rx" if match else "YouTube file date", tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList)
+          break_out_flag = True
+          break  
+      else: break_out_flag = False
+      if break_out_flag :  continue
             
       ### Word search for ep number in scrubbed title ###
       words, loop_completed, rx, is_special = list(filter(None, clean_string(ep, False, no_underscore=True).split())), False, "Word Search", False                    #
@@ -999,7 +1014,7 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
         if not ep:                                                                                                 continue                                           #
         for prefix in ["ep", "e", "act", "s"]:                                                                                                                        #
           if ep.startswith(prefix) and len(ep)>len(prefix) and WS_DIGIT.search(ep[len(prefix):]):
-            #Log.info('misc_count[word]: {}, filename.count(word)>=2: {}'.format(misc_count[word] if word in misc_count else 0, filename.count(word)))
+            #Log.info(u'misc_count[word]: {}, filename.count(word)>=2: {}'.format(misc_count[word] if word in misc_count else 0, filename.count(word)))
             ep, season = ep[len(prefix):], 0 if prefix=="s" and (word not in misc_count or filename.count(word)==1 and misc_count[word]==1 or filename.count(word)>=2 and misc_count[word]==2) else season  # E/EP/act before ep number ex: Trust and Betrayal OVA-act1 # to solve s00e002 "Code Geass Hangyaku no Lelouch S5 Picture Drama 02 'Stage 3.25'.mkv" "'Stage 3 25'"
             break
         else:
@@ -1017,33 +1032,41 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
           #elif ep.isdigit() and len(ep)==4:  filename = clean_string( " ".join(words).replace(ep, "(%s)" % ep));   continue                                           # take everything after supposed episode number
           if   ep.isdigit() and len(ep)==4 and int(ep)>= 1930: filename = clean_string( " ".join(words).replace(ep, "(%s)" % ep));   continue                                           # take everything after supposed episode number
         if "." in ep and ep.split(".", 1)[0].isdigit() and ep.split(".")[1].isdigit():                             season, ep, title = 0, ep.split(".", 1)[0], "Special " + ep; break # ep 12.5 = "12" title "Special 12.5"
-        if not path  and not " - Complete Movie" in file:  show = clean_string( " ".join(words[:words.index(word)]) if words.index(word)>0 else "No title", False)    # root folder and 
         title = clean_string( " ".join(words[words.index(word):])[" ".join(words[words.index(word):]).lower().index(ep)+len(ep):] )                                   # take everything after supposed episode number
         break
       else:  loop_completed = True
+      
+      ### Check for movies at root ###
+      if not path:
+        if " - Complete Movie" in file:
+          ep, title, show, loop_completed = "01", ep.split(" - Complete Movie")[0], ep.split(" - Complete Movie")[0], False    # root folder and movie    
+        else:
+          match = MOVIE_RX.search(ep)
+          if match:  ep, title, year, loop_completed = "01", match.group('show'), match.group('year'), False
+       
       if not loop_completed and ep.isdigit():
         standard_holding.append([file, root, path, show, season, int(ep), title, year, int(ep2) if ep2 and ep2.isdigit() else None, rx, tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList])
         continue
-
+      
       ### Check for Regex: SERIES_RX + ANIDB_RX ###
       ep = filename
       for rx in ANIDB_RX if is_special else (SERIES_RX + ANIDB_RX):
         match = rx.search(ep)
         if match:
           if match.groupdict().has_key('ep'    ) and match.group('ep'    ):               ep     = match.group('ep')
-          elif rx in ANIDB_RX[:-1]:                                                       ep     = "01"
+          elif rx in ANIDB_RX:                                                            ep     = "01"
           else:
             movie_list[season] = movie_list[season]+1 if season in movie_list else 1
             ep     = str(movie_list[season])                              # if no ep in regex and anidb special#add movies using year as season, starting at 1  # Year alone is season Year and ep incremented, good for series, bad for movies but cool for movies in series folder...
-            Log.info('movie - '+ep)
+            Log.info(u'movie - '+ep)
           if match.groupdict().has_key('ep2'   ) and match.group('ep2'   ):               ep2    =               match.group('ep2'   )                  #
           if match.groupdict().has_key('show'  ) and match.group('show'  ) and not path:  show   = clean_string( match.group('show'  ))                 # Mainly if file at root or _ folder
           if match.groupdict().has_key('season') and match.group('season'):               season =          int( match.group('season'))                 #
           if match.groupdict().has_key('title' ) and match.group('title' ):               title  = clean_string( match.group('title' ))                 #
           elif rx in ANIDB_RX:                                                            title  = ANIDB_TYPE[ANIDB_RX.index(rx)] + ' ' + ep            # Dingmatt fix for opening with just the ep number
           
-          if rx in ANIDB_RX[:-2]:                                                                                                                       ### AniDB Specials ################################################################
-            season = 0                                                                                                                                  # offset = 100 for OP, 150 for ED, etc... #Log.info("ep: '%s', rx: '%s', file: '%s'" % (ep, rx, file))
+          if rx in ANIDB_RX[:-1]:                                                                                                                       ### AniDB Specials ################################################################
+            season = 0                                                                                                                                  # offset = 100 for OP, 150 for ED, etc... #Log.info(u"ep: '%s', rx: '%s', file: '%s'" % (ep, rx, file))
             # AniDB xml load (ALWAYS GZIPPED)
             if source.startswith('anidb') and id and anidb_xml is None and rx in ANIDB_RX[1:3]:  #2nd and 3rd rx
               anidb_str = read_cached_url(ANIDB_HTTP_API_URL+id, foldername=os.path.join('AniDB','xml'), filename="%s.xml" % id)
@@ -1058,12 +1081,12 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
                   index=0
                   if title_.startswith('Opening '):  epno, index = title_.lstrip('Opening '), 1
                   if title_.startswith('Ending ' ):  epno, index = title_.lstrip('Ending  '), 2
-                  #Log.info('type: {}, epno: {}, title: {}, ANIDB_RX.index(rx): {}'.format(type, epno, title_, ANIDB_RX.index(rx)))
+                  Log.info(u'type: {}, epno: {}, title: {}, ANIDB_RX.index(rx): {}'.format(type, epno, title_, ANIDB_RX.index(rx)))
                   if epno and not epno.isdigit() and len(epno)>1 and epno[:-1].isdigit():                                                                                    ### OP/ED with letter version Example: op2a
                     epno, offsetno = int(epno[:-1]), ord(epno[-1:])-ord('a')
                     if   not index in AniDB_op:                                          AniDB_op[index]       = {epno: offsetno }
                     elif not epno in AniDB_op[index] or offsetno>AniDB_op[index][epno]:  AniDB_op[index][epno] =        offsetno
-              Log.info("AniDB URL: '{}', length: {}, AniDB_op: {}".format(ANIDB_HTTP_API_URL+id, len(anidb_str), AniDB_op))
+              Log.info(u"AniDB URL: '{}', length: {}, AniDB_op: {}".format(ANIDB_HTTP_API_URL+id, len(anidb_str), AniDB_op))
               
             ### OP/ED with letter version Example: op2a
             if not ep.isdigit() and len(ep)>1 and ep[:-1].isdigit():  ep, offset = int(ep[:-1]), ord(ep[-1:])-ord('a')
@@ -1073,7 +1096,7 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
               else:                               AniDB_op[ANIDB_RX.index(rx)] = {ep:   offset}
             cumulative_offset = sum( [ AniDB_op[ANIDB_RX.index(rx)][x] for x in Dict(AniDB_op, ANIDB_RX.index(rx), default={0:0}) if x<ep and ANIDB_RX.index(rx) in AniDB_op and x in AniDB_op[ANIDB_RX.index(rx)] ] )
             ep = ANIDB_OFFSET[ANIDB_RX.index(rx)] + int(ep) + offset + cumulative_offset    # Sum of all prior offsets
-            #Log.info('ep type offset: {}, ep: {}, offset: {}, cumulative_offset: {}, final ep number: {}'.format(ANIDB_OFFSET[ANIDB_RX.index(rx)], ep, offset, cumulative_offset, ep))
+            #Log.info(u'ep type offset: {}, ep: {}, offset: {}, cumulative_offset: {}, final ep number: {}'.format(ANIDB_OFFSET[ANIDB_RX.index(rx)], ep, offset, cumulative_offset, ep))
           standard_holding.append([file, root, path, show, int(season), int(ep), title, year, int(ep2) if ep2 and ep2.isdigit() else int(ep), rx, tvdb_mapping, unknown_series_length, offset_season, offset_episode, mappingList])
           break
       if match: continue  # next file iteration
@@ -1081,69 +1104,82 @@ def Scan(path, files, media, dirs, language=None, root=None, **kwargs): #get cal
       ### Ep not found, adding as season 0 episode 501+ ###
       if " - " in ep and len(ep.split(" - "))>1:  title = clean_string(" - ".join(ep.split(" - ")[1:])).strip()
       COUNTER = COUNTER+1
-      #Log.info('COUNTER "{}"'.format(COUNTER))
+      #Log.info(u'COUNTER "{}"'.format(COUNTER))
       if not path and not title:  unknown_holding.append([file, root, path, clean_string(root_filename), 1, 1, title or clean_string(filename, False, no_underscore=True), year, "", ""])
       else:                       unknown_holding.append([file, root, path, show if path else title, 0, COUNTER, title or clean_string(filename, False, no_underscore=True), year, "", ""])
     if run_count == 1 and len(files) > 0 and len(unknown_holding) == len(files):
-      Log.info("[All files were seen as unknown(5XX). Trying one more time without miscellaneous string filtering.]")
+      Log.info(u"[All files were seen as unknown(5XX). Trying one more time without miscellaneous string filtering.]")
       run_count, standard_holding, unknown_holding, COUNTER = run_count + 1, [], [], COUNTER - len(unknown_holding)
     else:  break  #Break out and don't try a second run as not all files are unknown or there are no files
   for entry in standard_holding + unknown_holding:  add_episode_into_plex(media, *entry)
-  if not files:  Log.info("[no files detected] #1")
   if files:  Stack.Scan(path, files, media, dirs)
-
-  ### root level manual call to Grouping folders ###
+  
+  ### Library root level manual call to Grouping folders ###
   if not path:
-    Log.info("root level manual call to Grouping folders")
+    Log.info(u"Library root ([R] Series in Grouping folder Root call (uncached), [_] Normal (cached) Plex call, include grouping folder itself, [S][s] Season folders (uppercase for Root call, lowercase for Plex standard Call)")
     folder_count, subfolders = {}, dirs[:]
     while subfolders:  #Allow to add to the list while looping, any other method failed ([:], enumerate)
-      full_path = subfolders.pop(0)
-      path      = os.path.relpath(full_path, root)
-
-      ### Ignore dirs ###
-      for rx in IGNORE_DIRS_RX:                                   # loop rx for folders to ignore
-        if rx.match(os.path.basename(path)):                      # if folder match rx
-          Log.info("# Folder: '{}' match '{}' pattern: '{}'".format(path, 'IGNORE_DIRS_RX', rx))
-          break
-      else:  ### Not skipped
-        
-        ### Extract season and transparent folder to reduce complexity and use folder as serie name ###
-        reverse_path, season_folder_first = list(reversed(path.split(os.sep))), False
-        for folder in reverse_path[:-1]:                 # remove root folder from test, [:-1] Doesn't thow errors but gives an empty list if items don't exist, might not be what you want in other cases
-          for rx in SEASON_RX:                           # in anime, more specials folders than season folders, so doing it first
-            if rx.search(clean_string(folder)):          # get season number but Skip last entry in seasons (skipped folders)
-              reverse_path.remove(folder)                # Since iterating slice [:] or [:-1] doesn't hinder iteration. All ways to remove: reverse_path.pop(-1), reverse_path.remove(thing|array[0])
-              if rx!=SEASON_RX[-1] and len(reverse_path)>=2 and folder==reverse_path[-2]:  season_folder_first = True
-              break
-        
-        ### Process subfolders ###
-        subdir_dirs, subdir_files = [], []
-        folder_count[path]        = 0
-        for file in os.listdir(full_path):
-          path_item = os.path.join(full_path, file) 
-          if os.path.isdir(path_item):                 subdir_dirs.append(path_item);  folder_count[path] +=1  #Fullpath
-          elif extension(file) in VIDEO_EXTS+['zip']:  subdir_files.append(path_item)                          #Fullpath
-        if not subdir_files and subdir_dirs:  # Only add in subfolders if no valid video files in the folder
-          Log.info(''.ljust(157, '-'))
-          for x in subdir_dirs:  Log.info("[Added] " + x);  subfolders.append(x)
+      full_path    = subfolders.pop(0)
+      path         = os.path.relpath(full_path, root)
+      folder       = os.path.basename(path)
+      folder_clean = clean_string(folder, no_dash=True, no_underscore=True, no_dot=True)  #no clean until season loop searched for source id
           
+      ### Skip path if matching Ignore dirs ###
+      for rx in IGNORE_DIRS_RX:               # loop rx for folders to ignore
+        if rx.match(folder_clean):  # if folder match rx
+          Log.info(u'{}[!] {} match IGNORE_DIRS_RX pattern [{}]'.format(''.ljust(path.count(os.sep)*4, ' '), os.path.basename(path), IGNORE_DIRS_RX.index(rx)))
+          if full_path in dirs:  dirs.remove(full_path)  # Since iterating slice [:] or [:-1] doesn't hinder iteration. All ways to remove: reverse_path.pop(-1), reverse_path.remove(thing|array[0])
+          break
+      else:
+      
+        ### Process subfolders ###
+        subdir_dirs, subdir_files, folder_count[path] = [], [], 0
+        for item in os.listdir(full_path):  #sorted(os.listdir(full_path),  key=natural_sort_key, reverse=True) :
+          path_item = os.path.join(full_path, item) 
+          if os.path.isdir(path_item):
+            subfolders.insert(folder_count[path], path_item)
+            subdir_dirs.append(path_item)
+            folder_count[path] +=1
+          elif extension(item) in VIDEO_EXTS+['zip']:  subdir_files.append(path_item)
+        
+        ### Extract season and transparent folder from reverse_path ###
+        reverse_path  = list(reversed(path.split(os.sep)))
+        season_folder = []
+        #season_folder_first = False
+        for dir in reverse_path[:-1]:                 # remove root folder from test, [:-1] Doesn't thow errors but gives an empty list if items don't exist, might not be what you want in other cases
+          match = SOURCE_IDS.search(dir)
+          if match:  Log.info(u'Source id detected: {}'.format(match.group('yt') if match.group('yt') else match.group('id'))); continue        #if it has a forced id, not a season folder
+          dir_clean = clean_string(dir, no_dash=True, no_underscore=True, no_dot=True)
+          for rx in SEASON_RX:                        # in anime, more specials folders than season folders, so doing it first
+            if rx.search(dir_clean):                  # get season number but Skip last entry in seasons (skipped folders)
+              if rx!=SEASON_RX[-1]:  season_folder.append(dir)  # and len(reverse_path)>=2:  # and folder==reverse_path[-2]:
+                #season_folder_first = True
+              reverse_path.remove(dir)                # Since iterating slice [:] or [:-1] doesn't hinder iteration. All ways to remove: reverse_path.pop(-1), reverse_path.remove(thing|array[0])
+              break
+              
         ### Call Grouping folders series ###
-        #if subdir_files:                                                           ### Calling Scan for every folder with files ###
-        #if subdir_files and not(len(reverse_path)>1 and not season_folder_first):  ### Calling Scan normal    subfolders only ###
         grouping_dir = full_path.rsplit(os.sep, full_path.count(os.sep)-1-root.count(os.sep))[0]
         root_folder  = os.path.relpath(grouping_dir, root).split(os.sep, 1)[0]
-        if subdir_files and len(reverse_path)>1 and not season_folder_first and folder_count[root_folder]>1:  ### Calling Scan for grouping folders only ###
-          if grouping_dir in dirs:
-            Log.info(''.ljust(157, '-'))
-            Log.info("[{}] Grouping folder (contain {} dirs)".format(root_folder, folder_count[root_folder]))
-            dirs.remove(grouping_dir)  #Prevent grouping folders from being called by Plex normal call to Scan() 
-          Log.info("- {:<60}, subdir_files: {:>3}, reverse_path: {:<40}".format(path, len(subdir_files), reverse_path))
-          Scan(path, sorted(subdir_files), media, sorted(subdir_dirs), language=language, root=root, kwargs_trigger=True)  #relative path for dir or it will show only grouping folder series
-          set_logging(root=root, filename='_root_'+root.replace(os.sep, '-')+'.scanner.log', mode='a')
+        indent       = path.count(os.sep)*4
+        if folder!=root_folder and folder_clean!=root_folder:  folder_clean = folder_clean.replace(root_folder, "").strip()
+        if root_folder==path:
+            set_logging(root=root, filename=path.split(os.sep)[0]+'.scanner.log' , mode='w')  #Empty serie folder log
+            set_logging(root=root, filename=path.split(os.sep)[0]+'.filelist.log', mode='w')  #Empty filelist     log
+            set_logging(root=root, filename=log_filename         +'.scanner.log' , mode='a')  #Set back 
+        if len(reverse_path)>1  and folder_count[root_folder]>1:  # and not season_folder_first ### Calling Scan for grouping folders only ###
+          Log.info(u'{}[{}] {:<{x}} {}'.format(''.ljust(path.count(os.sep)*4, ' '), 'S' if folder in season_folder else 'G', folder_clean, '({:>3} files)'.format(len(subdir_files)) if subdir_files else '', x=120-indent))
+          if subdir_files:
+            Scan(path, sorted(subdir_files), media, sorted(subdir_dirs), language=language, root=root, kwargs_trigger=True)  #relative path for dir or it will show only grouping folder series
+            set_logging(root=root, filename=log_filename+'.scanner.log', mode='a')  #due to concurrent calls, wouldn't log propertly without setting it back, just in case
+        else:  Log.info(u'{}[{}] {:<{x}}{}'.format(''.ljust(indent, ' '), 's' if folder in season_folder else '_', folder_clean, '({:>3} files)'.format(len(subdir_files)) if subdir_files else '', x=120-indent))
+      
+    Log.info(u"".ljust(157, '='))
+    Log.info(u"Dirs left for normal Plex calls:")
+    for dir in dirs:  Log.info(u"[_] {}".format(os.path.relpath(dir, root)))
 
-  Log.info("".ljust(157, '='))
-  Log.info("{} scan end: {}".format("Manual" if kwargs else "Plex", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")))
-
+  Log.info(u"".ljust(157, '='))
+  Log.info(u"")
+  
 ### Command line scanner call ###
 if __name__ == '__main__':  #command line
   print("Absolute Series Scanner by ZeroQI")

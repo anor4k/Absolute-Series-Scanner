@@ -1,7 +1,7 @@
 ## Plex scanner responsibilities
 A Plex Series Scanner makes the video files showing in Plex and populate the following for the video files:
-- Series name
-- Series year
+- Series name (including forced id passed to agent search() function)
+- Series year (optional)
 - Season number
 - Episode number
 - Episode title (not filled by plex default series scanner, but ASS fills it, but this will be overwritten by the metadata agent)
@@ -25,7 +25,7 @@ Any information missing or wrong inthere in Plex is an Agent issue, refer to the
 
 ## Absolute series scanner functions that differes from Plex Series Scanner
 - .plexignore' fully working including subfolders
-- YouTube playlist with id in series or season folder get added without numbering/renaming needed
+- YouTube playlist with id in series or season folder get added without numbering/renaming needed, or channel id in Sereis folder
 - Video files inside zip file gets displayed (not playable)
 - Seamless 'Grouping folder': For example 'Dragon Ball/[01] Dragon Ball/ep xxx.ext'
 - Season folder advance support: 'Season xxx title_for season'
@@ -39,6 +39,7 @@ Any information missing or wrong inthere in Plex is an Agent issue, refer to the
 - Use sagas as seasons keeping absolute numbering with TVDB4 and it create even the seasons for you from a database if not specified
 - Versatile file format support. if a logical numbering format isn't supported let me know (no episode number in brackets or parenthesis though, that's moronic)
 - put per-series logs ('xxx.filelist.log' and 'xxx.scanner.log' in /Plex Media Server/Plug-in Support/Data/com.plexapp.agents.hama/DataItems/Logs).
+- Filebot Xattr series id support, uses the scanner files from https://github.com/filebot/plex-agents
 
 ## Requirements
 -  Library libxslt (XML stylesheet transformation library) installed
@@ -141,14 +142,16 @@ Movie libraries can have "Extra" in a specifically named folders or with the fol
 Note: "Extras" folder is skipped by the absolute series scanner, put unsorted files in there, it won't show up in Plex
 
 ### Grouping folder
-- If you use "Grouping folder / Show Name / Season 1 / Show Name e01.ext" convention from the root, it will work but be scanned every time.
+- If you use "Grouping folder / Show Name / Season 1 / Show Name e01.ext" convention from the root, it will work but be scanned every time you scan.
+- For YouTube, it it create too many API requests, unless you create 'Playlist.info.json' in library folder with YouTube-dl -J --dump-single-json <playlist-url> > Playlist.info.json
 
 ### Forcing the movie/series ID
 Hama supports the following guid_type:
 - anidb for AniDB.net (and and the behaviour changing mode anidb2)
 - tvdb  for TheTVDB.com (and the behaviour changing modes: tvdb2, tvdb3, tvdb4)
-- [deprecated] tmdb  For TheMovieDB.net (and the series part of TheMovieDB: tsdb)
-- [deprecated] imdb  For the International Movie DataBase (ids starts with "tt...")
+- tmdb  For TheMovieDB.net (and the series part of TheMovieDB: tsdb)
+- imdb  For the International Movie DataBase (ids starts with "tt...")
+- youtube for youtube channel and playlist id (and video id on filenames)
 
 You can specify the guid to use the following way:
 - In Series folder name by adding " [guid_type-id_number]" at the end (like "Oruchuban Ebichu [anidb-150]")
@@ -201,8 +204,7 @@ You can specify the guid to use the following way:
         <TR> <TD> tvdb5     </TD> <TD> TVDB                    </TD> <TD>Absolute             </TD> <TD>Absolute          </TD> <TD>TheTVDB Absolute numbering order (most useful for Star Wars: The Clone Wars, First ep is s02e15...) will remove seasons present and use the 'absolute_number' tvdb field order to re-sort the episodes. Allow to insert specials in between episodes too (prequel)
 <UL><LI>Star Wars: The Clone Wars [tvdb5-83268] </LI></UL>
 </TD> </TR>
-        <TR> <TD> youtube     </TD> <TD> YouTube                    </TD> <TD> None             </TD> <TD> None          </TD> <TD> Put Playlist id (PL... 2+16/32 chars long) on series folder or season folder to have the youtube files downloaded with youtube-dl numbered as per the playlist order</LI></UL>
-</TD> </TR>
+        <TR> <TD> youtube     </TD> <TD> YouTube                    </TD> <TD> None             </TD> <TD> None          </TD> <TD> Put Playlist id (PL... 2+16/32 chars long) on series folder or season folder (auto-reversing) or channel id on series folder (year used as season, added as date-based unless there are duplicates for the date in which case it choose ep number MMDDxx with XX being incremental)</TD> </TR>
 </TBODY>
 </TABLE>
 
@@ -220,15 +222,27 @@ Because it doesn't have an XML extension, it won't accept XML tags inside. Forma
     09|085|120|Reincarnation Arc
     10|121|121|Arc 10 (unknown length)
 </CODE></PRE>
-        
+
+##### Filebot Xattr series id support 
+Filebot support metadata in file system extended attributes, and has released a movies, series scanner and secondary agent here: https://github.com/filebot/plex-agents/blob/master/Scanners/Series/FileBot%20Xattr%20Series%20Scanner.py
+
+One can instruct to save metadata in the OS file system metadata (examples attached)
+- "database":"TheTVDB", "type":"TV Series","id":253463 => translate into [tvdb-id]
+- "database":"AniDB", "type":"Anime", "id":578 => translate into [anidb-id
+- "database":"TheMovieDB::TV", "type":"TV Series","id":42009 => translate into [tsdb-id]
+- "database":"TheMovieDB::??????","type":"Movies", "id":????? => translate into [tmdb-id]
+   {"@type":"Movie","year":2016,"imdbId":2513074,"tmdbId":293767,"language":"en","id":293767,"name":"Billy Lynn's Long Halftime Walk","aliasNames":[]}
+
 ##### Advanced modes
-For when you have episodes of a series in SEPARATE parent folders but want them to show as a single series in Plex:
-- " [anidb2-xxxxx]" will find the season & episode offset defined in the ScudLee file and add into Plex with it's corresponding TVDB series/season/episode numbers
-- " [anidb3-xxxxx]" will find the season & episode offset defined in the ScudLee file and add into Plex ?????
-- " [anidb4-xxxxx]" will find the season & episode offset defined in the ScudLee file and add into Plex ????
-- " [tvdb/2/3/4-xxxxx-sY]" episode numbers found in the files are left alone and added to season Y
-- " [tvdb/2/3/4-xxxxx-eZ]" episode numbers found in the files are adjusted (epNum+Z-1)
-- " [tvdb/2/3/4-xxxxx-sYeZ]" episode numbers found in the files are adjusted (epNum+Z-1) and added to season Y, Z is the offset for the episodes in season Y for when we want it to start mid tvdb season
+If the season and/or episode numbers of your files don't match up with the AniDB or TVDB episodes, you can manually specify the season and the episode offset in the parent folder name.
+
+The following suffixes are supported:
+- `-sY]` All episodes in the folder are assigned to season Y, but the episode number stays the same.
+- `-eZ]` Episode numbers found in the files are adjusted.
+  - For positive offsets, the episode number becomes epNum+Z-1. (Episode 1 will show up as episode Z)
+  - For negative offsets, the episode number becomes epNum+Z. (For Z=-13, episode 14 will show up as episode 1)
+- `-sYeZ]` The effects of the options above are combined.
+
 - **!!IMPORTANT NOTES!!**
   - When defining your modes on your folders:
     - If you don't use the same mode or compatible modes for all separate folders for a series, you will run into issues.
@@ -250,9 +264,9 @@ For when you have episodes of a series in SEPARATE parent folders but want them 
 - "Sailor Moon Crystal Season 3 [anidb2-11665]" = "[tvdb-275039-s3]" | "[tvdb2-275039-s3]" (depending if you keep absolute numbered eps in seasons)
   
 == Example 3 ==
-  "Bleach                                    [tvdb3-74796]"
-  "Bleach movie 1 Memories in the Rain       [tvdb3-74796-s0e3]"
-  "Bleach movie 2 The Diamond Dust Rebellion [tvdb3-74796-s0e4]"
+- "Bleach                                    [tvdb3-74796]"
+- "Bleach movie 1 Memories in the Rain       [tvdb3-74796-s0]"
+- "Bleach movie 2 The Diamond Dust Rebellion [tvdb3-74796-s0e4]"
   
 == Example 4 == tvdb4 Custom selected Arcs as seasons (as tvdb use them as half seasons for black lagoon for example)
   The arc definition to split into seasons the absolute numbering is done using the following order:
